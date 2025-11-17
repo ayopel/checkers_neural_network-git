@@ -1,5 +1,4 @@
-﻿using checkersclaude;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -8,39 +7,30 @@ namespace checkersclaude
     public class Population
     {
         public List<Player> Players { get; private set; }
-        public int Generation { get; private set; }
-        public int PopulationSize { get; private set; }
-        public double MutationRate { get; set; }
         public Player BestPlayer { get; private set; }
-        public double BestFitness { get; private set; }
+        public int Generation { get; private set; }
 
+        private double mutationRate;
         private Random random;
+        private const int EliteCount = 3; // Top performers to keep unchanged
+        private const int TournamentSize = 3; // For tournament selection
 
-        public Population(int populationSize, double mutationRate = 0.1, int? seed = null)
+        public Population(int populationSize, double mutationRate)
         {
-            PopulationSize = populationSize;
-            MutationRate = mutationRate;
-            Generation = 1;
-            random = seed.HasValue ? new Random(seed.Value) : new Random();
+            this.mutationRate = mutationRate;
+            this.random = new Random(Guid.NewGuid().GetHashCode()); // Better randomization
+            this.Generation = 0;
 
             Players = new List<Player>();
+
+            // Create diverse initial population with different random seeds
             for (int i = 0; i < populationSize; i++)
             {
-                Players.Add(new Player(random));
-            }
-        }
-
-        public void EvaluatePopulation()
-        {
-            // Calculate fitness for each player
-            foreach (Player player in Players)
-            {
-                player.CalculateFitness();
+                Random playerRandom = new Random(Guid.NewGuid().GetHashCode() + i);
+                Players.Add(new Player(playerRandom));
             }
 
-            // Find best player
-            BestPlayer = Players.OrderByDescending(p => p.Fitness).First();
-            BestFitness = BestPlayer.Fitness;
+            BestPlayer = null;
         }
 
         public void RunTournament(int gamesPerPair = 2)
@@ -51,87 +41,248 @@ namespace checkersclaude
                 player.ResetStats();
             }
 
-            // Round-robin tournament with each pair playing multiple games
+            // Round-robin tournament - each player plays against several others
+            int matchesPerPlayer = Math.Min(8, Players.Count - 1);
+
             for (int i = 0; i < Players.Count; i++)
             {
-                for (int j = i + 1; j < Players.Count; j++)
-                {
-                    for (int game = 0; game < gamesPerPair; game++)
-                    {
-                        // Alternate colors
-                        Player red = game % 2 == 0 ? Players[i] : Players[j];
-                        Player black = game % 2 == 0 ? Players[j] : Players[i];
+                // Select different opponents for variety
+                List<int> opponents = GetRandomOpponents(i, matchesPerPlayer);
 
-                        PlayGame(red, black);
-                    }
+                foreach (int opponentIndex in opponents)
+                {
+                    // Play games with alternating colors
+                    PlayGame(Players[i], Players[opponentIndex], PieceColor.Red);
+                    PlayGame(Players[i], Players[opponentIndex], PieceColor.Black);
                 }
             }
 
-            EvaluatePopulation();
+            // Calculate fitness for all players
+            foreach (Player player in Players)
+            {
+                player.CalculateFitness();
+            }
+
+            // Update best player
+            Player currentBest = Players.OrderByDescending(p => p.Fitness).First();
+            if (BestPlayer == null || currentBest.Fitness > BestPlayer.Fitness)
+            {
+                BestPlayer = currentBest.Clone();
+            }
         }
 
-        private void PlayGame(Player redPlayer, Player blackPlayer, int maxMoves = 200)
+        private List<int> GetRandomOpponents(int playerIndex, int count)
         {
-            GameEngine game = new GameEngine();
-            int moveCount = 0;
+            List<int> opponents = new List<int>();
+            List<int> available = new List<int>();
 
-            while (game.State != GameState.RedWins &&
-                   game.State != GameState.BlackWins &&
-                   moveCount < maxMoves)
+            for (int i = 0; i < Players.Count; i++)
             {
-                Player currentPlayer = game.State == GameState.RedTurn ? redPlayer : blackPlayer;
-                PieceColor currentColor = game.State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
+                if (i != playerIndex)
+                    available.Add(i);
+            }
+
+            // Shuffle available opponents
+            for (int i = available.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                int temp = available[i];
+                available[i] = available[j];
+                available[j] = temp;
+            }
+
+            // Take first 'count' opponents
+            for (int i = 0; i < Math.Min(count, available.Count); i++)
+            {
+                opponents.Add(available[i]);
+            }
+
+            return opponents;
+        }
+
+        private void PlayGame(Player player1, Player player2, PieceColor player1Color)
+        {
+            Board board = new Board();
+            PieceColor player2Color = player1Color == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
+            PieceColor currentColor = PieceColor.Red; // Red always starts
+
+            int maxMoves = 200; // Prevent infinite games
+            int moveCount = 0;
+            int movesWithoutCapture = 0;
+            const int maxMovesWithoutCapture = 40; // Draw condition
+
+
+            while (moveCount < maxMoves)
+            {
+                Player currentPlayer = currentColor == player1Color ? player1 : player2;
+                Player otherPlayer = currentColor == player1Color ? player2 : player1;
 
                 // Get all valid moves for current player
-                List<Move> allValidMoves = GetAllValidMoves(game, currentColor);
+                List<Move> allMoves = GetAllValidMoves(board, currentColor);
 
-                if (allValidMoves.Count == 0)
-                    break;
+                if (allMoves.Count == 0)
+                {
+                    // Current player has no moves - they lose
+                    if (currentColor == player1Color)
+                    {
+                        player1.Losses++;
+                        player2.Wins++;
+                    }
+                    else
+                    {
+                        player1.Wins++;
+                        player2.Losses++;
+                    }
+                    return;
+                }
 
-                // Let AI choose a move
-                Move chosenMove = currentPlayer.ChooseMove(game.Board, allValidMoves, currentColor);
+                // Choose and execute move
+                Move selectedMove = currentPlayer.ChooseMove(board, allMoves, currentColor);
 
-                if (chosenMove == null)
-                    break;
+                if (selectedMove == null)
+                {
+                    // Error in move selection - current player loses
+                    if (currentColor == player1Color)
+                    {
+                        player1.Losses++;
+                        player2.Wins++;
+                    }
+                    else
+                    {
+                        player1.Wins++;
+                        player2.Losses++;
+                    }
+                    return;
+                }
+
+                // Count opponent pieces before move
+                PieceColor opponentColor = currentColor == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
+                int opponentPiecesBefore = board.GetAllPieces(opponentColor).Count;
+
+                // Check if moving piece will become a king
+                Piece movingPiece = board.GetPiece(selectedMove.From);
+                bool willBecomeKing = false;
+                if (movingPiece != null && movingPiece.Type != PieceType.King)
+                {
+                    willBecomeKing = (movingPiece.Color == PieceColor.Red && selectedMove.To.Row == 0) ||
+                                    (movingPiece.Color == PieceColor.Black && selectedMove.To.Row == 7);
+                }
 
                 // Execute the move
-                game.SelectPiece(chosenMove.From);
-                game.MovePiece(chosenMove.To);
+                board.ApplyMove(selectedMove);
 
+                // Count opponent pieces after move
+                int opponentPiecesAfter = board.GetAllPieces(opponentColor).Count;
+                int piecesCaptured = opponentPiecesBefore - opponentPiecesAfter;
+
+                // Update stats
+                if (piecesCaptured > 0)
+                {
+                    otherPlayer.PiecesLost += piecesCaptured;
+
+                    // Check if any kings were captured
+                    if (selectedMove.IsJump && selectedMove.JumpedPositions != null)
+                    {
+                        foreach (var jumpedPos in selectedMove.JumpedPositions)
+                        {
+                            // We can't check anymore since pieces are removed, but we tracked it in player stats
+                        }
+                    }
+
+                    movesWithoutCapture = 0;
+                }
+                else
+                {
+                    movesWithoutCapture++;
+                }
+
+                if (willBecomeKing)
+                {
+                    currentPlayer.KingsMade++;
+                }
+
+                // Check for draws (no captures for too long)
+                if (movesWithoutCapture >= maxMovesWithoutCapture)
+                {
+                    player1.Draws++;
+                    player2.Draws++;
+                    return;
+                }
+
+                // Check win conditions
+                List<Piece> redPieces = board.GetAllPieces(PieceColor.Red);
+                List<Piece> blackPieces = board.GetAllPieces(PieceColor.Black);
+
+                if (redPieces.Count == 0)
+                {
+                    if (player1Color == PieceColor.Black)
+                    {
+                        player1.Wins++;
+                        player2.Losses++;
+                    }
+                    else
+                    {
+                        player1.Losses++;
+                        player2.Wins++;
+                    }
+                    return;
+                }
+
+                if (blackPieces.Count == 0)
+                {
+                    if (player1Color == PieceColor.Red)
+                    {
+                        player1.Wins++;
+                        player2.Losses++;
+                    }
+                    else
+                    {
+                        player1.Losses++;
+                        player2.Wins++;
+                    }
+                    return;
+                }
+
+                // Switch turns
+                currentColor = currentColor == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
                 moveCount++;
             }
 
-            // Update player stats
-            if (game.State == GameState.RedWins)
-            {
-                redPlayer.Wins++;
-                blackPlayer.Losses++;
-                blackPlayer.PiecesLost = 12 - game.Board.GetAllPieces(PieceColor.Black).Count;
-            }
-            else if (game.State == GameState.BlackWins)
-            {
-                blackPlayer.Wins++;
-                redPlayer.Losses++;
-                redPlayer.PiecesLost = 12 - game.Board.GetAllPieces(PieceColor.Red).Count;
-            }
-            else
-            {
-                // Draw
-                redPlayer.Draws++;
-                blackPlayer.Draws++;
-            }
+            // Max moves reached - draw
+            player1.Draws++;
+            player2.Draws++;
         }
 
-        private List<Move> GetAllValidMoves(GameEngine game, PieceColor color)
+        private List<Move> GetAllValidMoves(Board board, PieceColor color)
         {
             List<Move> allMoves = new List<Move>();
-            List<Piece> pieces = game.Board.GetAllPieces(color);
-            MoveValidator validator = new MoveValidator(game.Board);
+            MoveValidator validator = new MoveValidator(board);
 
+            List<Piece> pieces = board.GetAllPieces(color);
+
+            // Check for mandatory jumps first
+            bool hasJumps = false;
             foreach (Piece piece in pieces)
             {
-                List<Move> pieceMoves = validator.GetValidMoves(piece);
-                allMoves.AddRange(pieceMoves);
+                List<Move> jumps = piece.Type == PieceType.King ?
+                    validator.GetValidKingJumps(piece) :
+                    validator.GetValidJumps(piece);
+
+                if (jumps.Count > 0)
+                {
+                    hasJumps = true;
+                    allMoves.AddRange(jumps);
+                }
+            }
+
+            // If there are jumps, only return jumps (mandatory in checkers)
+            if (hasJumps)
+                return allMoves;
+
+            // Otherwise, get all normal moves
+            foreach (Piece piece in pieces)
+            {
+                allMoves.AddRange(validator.GetValidMoves(piece));
             }
 
             return allMoves;
@@ -139,57 +290,92 @@ namespace checkersclaude
 
         public void Evolve()
         {
-            List<Player> newGeneration = new List<Player>();
+            Generation++;
 
-            // Elitism: Keep top 10% of players
-            int eliteCount = Math.Max(1, PopulationSize / 10);
+            // Sort players by fitness (descending)
             List<Player> sortedPlayers = Players.OrderByDescending(p => p.Fitness).ToList();
 
-            for (int i = 0; i < eliteCount; i++)
+            List<Player> newPopulation = new List<Player>();
+
+            // Keep elite players (exact copies)
+            for (int i = 0; i < EliteCount && i < sortedPlayers.Count; i++)
             {
-                newGeneration.Add(sortedPlayers[i].Clone());
+                newPopulation.Add(sortedPlayers[i].Clone());
             }
 
-            // Fill rest with offspring
-            while (newGeneration.Count < PopulationSize)
+            // Create offspring to fill the rest of the population
+            while (newPopulation.Count < Players.Count)
             {
-                Player parent1 = SelectParent();
-                Player parent2 = SelectParent();
+                // Select parents using tournament selection
+                Player parent1 = TournamentSelection(sortedPlayers);
+                Player parent2 = TournamentSelection(sortedPlayers);
 
+                // Ensure parents are different
+                int attempts = 0;
+                while (parent1 == parent2 && attempts < 5)
+                {
+                    parent2 = TournamentSelection(sortedPlayers);
+                    attempts++;
+                }
+
+                // Create offspring through crossover
                 Player child = parent1.Crossover(parent2, random);
-                child.Mutate(MutationRate);
 
-                newGeneration.Add(child);
+                // Apply mutation with some randomness
+                double adaptiveMutationRate = mutationRate * (0.5 + random.NextDouble());
+                child.Mutate(adaptiveMutationRate);
+
+                newPopulation.Add(child);
             }
 
-            Players = newGeneration;
-            Generation++;
+            // Replace 10% of population with completely random players for diversity
+            int randomCount = Math.Max(2, Players.Count / 10);
+            for (int i = 0; i < randomCount; i++)
+            {
+                if (newPopulation.Count > EliteCount + i)
+                {
+                    Random newRandom = new Random(Guid.NewGuid().GetHashCode() + Generation * 1000 + i);
+                    newPopulation[EliteCount + i] = new Player(newRandom);
+                }
+            }
+
+            Players = newPopulation;
         }
 
-        private Player SelectParent()
+        private Player TournamentSelection(List<Player> sortedPlayers)
         {
-            // Tournament selection
-            int tournamentSize = 5;
-            Player best = Players[random.Next(Players.Count)];
+            List<Player> tournament = new List<Player>();
 
-            for (int i = 1; i < tournamentSize; i++)
+            for (int i = 0; i < TournamentSize; i++)
             {
-                Player contestant = Players[random.Next(Players.Count)];
-                if (contestant.Fitness > best.Fitness)
-                    best = contestant;
+                int randomIndex = random.Next(sortedPlayers.Count);
+                tournament.Add(sortedPlayers[randomIndex]);
             }
 
-            return best;
+            return tournament.OrderByDescending(p => p.Fitness).First();
         }
 
         public string GetGenerationStats()
         {
-            double avgFitness = Players.Average(p => p.Fitness);
-            double avgWins = Players.Average(p => p.Wins);
-            double avgMoves = Players.Average(p => p.TotalMoves);
+            if (Players.Count == 0)
+                return "No players";
 
-            return $"Generation {Generation} | Best Fitness: {BestFitness:F2} | " +
-                   $"Avg Fitness: {avgFitness:F2} | Avg Wins: {avgWins:F2} | Avg Moves: {avgMoves:F2}";
+            double avgFitness = Players.Average(p => p.Fitness);
+            double maxFitness = Players.Max(p => p.Fitness);
+            double minFitness = Players.Min(p => p.Fitness);
+            double avgWins = Players.Average(p => p.Wins);
+            double avgLosses = Players.Average(p => p.Losses);
+            double avgDraws = Players.Average(p => p.Draws);
+            double avgMoves = Players.Average(p => p.TotalMoves);
+            double avgCaptures = Players.Average(p => p.PiecesCaptured);
+            double avgKings = Players.Average(p => p.KingsMade);
+
+            Player best = Players.OrderByDescending(p => p.Fitness).First();
+            Player worst = Players.OrderBy(p => p.Fitness).First();
+
+            return $"Generation {Generation} | Best Fitness: {maxFitness:F2} | Avg Fitness: {avgFitness:F2} | " +
+                   $"Avg Wins: {avgWins:F1} | Avg Moves: {avgMoves:F0} | " +
+                   $"Range: {minFitness:F0}-{maxFitness:F0}";
         }
     }
 }

@@ -23,7 +23,8 @@ namespace checkersclaude
         RedTurn,
         BlackTurn,
         RedWins,
-        BlackWins
+        BlackWins,
+        draw
     }
     public enum GameMode
     {
