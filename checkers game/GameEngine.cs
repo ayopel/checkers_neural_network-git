@@ -2,6 +2,15 @@
 
 namespace checkersclaude
 {
+    public enum GameState
+    {
+        RedTurn,
+        BlackTurn,
+        RedWins,
+        BlackWins,
+        Draw
+    }
+
     public class GameEngine
     {
         public Board Board { get; private set; }
@@ -21,6 +30,17 @@ namespace checkersclaude
             mustContinueJumping = false;
             movesSinceCapture = 0;
         }
+        public bool IsGameOver()
+        {
+            return State == GameState.RedWins || State == GameState.BlackWins || State == GameState.Draw;
+        }
+
+        // Apply a move using your existing MovePiece method
+        public void ApplyMove(Move move)
+        {
+            MovePiece(move.To);
+        }
+
 
         public GameEngine(Board board)
         {
@@ -45,7 +65,7 @@ namespace checkersclaude
             if (piece.Color != currentColor)
                 return false;
 
-            // Check if this piece can make mandatory jumps
+            // Check if there are mandatory jumps
             if (validator.HasAvailableJumps(currentColor))
             {
                 List<Move> jumps = piece.Type == PieceType.King ?
@@ -53,7 +73,7 @@ namespace checkersclaude
                     validator.GetValidJumps(piece);
 
                 if (jumps.Count == 0)
-                    return false; // Can't select piece with no jumps when jumps are available
+                    return false; // Can't select a piece without jumps
             }
 
             selectedPiece = piece;
@@ -67,7 +87,6 @@ namespace checkersclaude
 
             List<Move> validMoves = validator.GetValidMoves(selectedPiece);
             Move selectedMove = validMoves.Find(m => m.To.Equals(to));
-
             if (selectedMove == null)
                 return false;
 
@@ -100,7 +119,7 @@ namespace checkersclaude
                 if (additionalJumps.Count > 0)
                 {
                     mustContinueJumping = true;
-                    return true;
+                    return true; // Player must continue jumping
                 }
             }
             else
@@ -108,13 +127,13 @@ namespace checkersclaude
                 movesSinceCapture++;
             }
 
-            // Check for king promotion (only if wasn't already a king)
+            // King promotion
             if (!wasKing && selectedPiece.Type == PieceType.Regular)
             {
                 if ((selectedPiece.Color == PieceColor.Red && to.Row == 0) ||
                     (selectedPiece.Color == PieceColor.Black && to.Row == Board.GetBoardSize() - 1))
                 {
-                    selectedPiece.PromoteToKing();
+                    selectedPiece.Type = PieceType.King;
                 }
             }
 
@@ -142,25 +161,24 @@ namespace checkersclaude
 
         private void SwitchTurn()
         {
-            State = State == GameState.RedTurn ? GameState.BlackTurn : GameState.RedTurn;
+            if (State == GameState.RedTurn) State = GameState.BlackTurn;
+            else if (State == GameState.BlackTurn) State = GameState.RedTurn;
         }
 
         private void CheckWinCondition()
         {
             // Determine current player's color (the player whose turn it is now)
             PieceColor currentColor = State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
+            List<Piece> pieces = Board.GetAllPieces(currentColor);
 
-            // Get all pieces for the current player
-            List<Piece> pieces = Board.GetAllPieces(currentColor) ?? new List<Piece>();
-
-            // Check if current player has no pieces
+            // No pieces left
             if (pieces.Count == 0)
             {
                 State = currentColor == PieceColor.Red ? GameState.BlackWins : GameState.RedWins;
                 return;
             }
 
-            // Check if current player has any valid moves
+            // Check if any valid moves
             bool hasValidMoves = false;
             foreach (Piece piece in pieces)
             {
@@ -174,16 +192,17 @@ namespace checkersclaude
             if (!hasValidMoves)
             {
                 State = currentColor == PieceColor.Red ? GameState.BlackWins : GameState.RedWins;
+                return;
             }
 
-            // Optional: check for draw by move limit (50 moves without capture)
-         
+            // Draw condition: max moves without capture
+            if (movesSinceCapture >= MaxMovesWithoutCapture)
+            {
+                State = GameState.Draw;
+            }
         }
 
-        public Piece GetSelectedPiece()
-        {
-            return selectedPiece;
-        }
+        public Piece GetSelectedPiece() => selectedPiece;
 
         public void DeselectPiece()
         {
@@ -201,14 +220,8 @@ namespace checkersclaude
             movesSinceCapture = 0;
         }
 
-        public bool MustContinueJumping()
-        {
-            return mustContinueJumping;
-        }
+        public bool MustContinueJumping() => mustContinueJumping;
 
-        public int GetMovesSinceCapture()
-        {
-            return movesSinceCapture;
-        }
+        public int GetMovesSinceCapture() => movesSinceCapture;
     }
 }

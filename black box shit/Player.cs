@@ -259,6 +259,27 @@ namespace checkersclaude
         {
             Brain.Mutate(mutationRate);
         }
+        public Move GetBestMove(Board board)
+        {
+            PieceColor color = PlayerColor(board);
+            List<Piece> pieces = board.GetAllPieces(color);
+
+            List<Move> allMoves = new List<Move>();
+            foreach (var piece in pieces)
+            {
+                allMoves.AddRange(piece.GetValidMoves(board));
+            }
+
+            return ChooseMove(board, allMoves, color);
+        }
+
+        // Determine player color based on whose turn it is on the board
+        private PieceColor PlayerColor(Board board)
+        {
+            // You can decide: maybe Red is always Player 1
+            // Or, if you have a GameEngine reference, use its State
+            return PieceColor.Red; // for simplicity
+        }
 
         public Player Crossover(Player partner, Random random)
         {
