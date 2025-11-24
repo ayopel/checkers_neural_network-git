@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace checkersclaude
 {
@@ -221,21 +222,42 @@ namespace checkersclaude
     public class MoveValidator
     {
         private readonly Board board;
+        private Dictionary<string, List<Move>> moveCache;
 
-        public MoveValidator(Board board) => this.board = board;
+        public MoveValidator(Board board)
+        {
+            this.board = board;
+            this.moveCache = new Dictionary<string, List<Move>>();
+        }
+
+        public void ClearCache()
+        {
+            moveCache.Clear();
+        }
 
         public List<Move> GetValidMoves(Piece piece)
         {
+            string cacheKey = $"{piece.Position}_{piece.Color}_{piece.Type}_{board.GetStateString()}";
+
+            if (moveCache.ContainsKey(cacheKey))
+                return new List<Move>(moveCache[cacheKey]);
+
+            List<Move> moves;
             if (HasAvailableJumps(piece.Color))
             {
-                return piece.Type == PieceType.King ?
+                moves = piece.Type == PieceType.King ?
                     GetValidKingJumps(piece) :
                     GetValidJumps(piece);
             }
+            else
+            {
+                moves = piece.Type == PieceType.King ?
+                    GetValidKingMoves(piece) :
+                    GetValidRegularMoves(piece);
+            }
 
-            return piece.Type == PieceType.King ?
-                GetValidKingMoves(piece) :
-                GetValidRegularMoves(piece);
+            moveCache[cacheKey] = moves;
+            return new List<Move>(moves);
         }
 
         private List<Move> GetValidRegularMoves(Piece piece)
@@ -376,4 +398,4 @@ namespace checkersclaude
             return false;
         }
     }
-}
+}   

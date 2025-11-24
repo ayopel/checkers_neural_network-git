@@ -19,9 +19,6 @@ namespace checkersclaude
         private const int SquareSize = 70;
         private Position? lastMoveFrom;
         private Position? lastMoveTo;
-        private int moveCount = 0;
-        private int redPiecesCaptured = 0;
-        private int blackPiecesCaptured = 0;
 
         public CheckersForm(GameMode mode, AIPlayer aiPlayer)
         {
@@ -101,7 +98,7 @@ namespace checkersclaude
             resetButton.Click += ResetButton_Click;
             sidePanel.Controls.Add(resetButton);
 
-            // Undo button - NOW ENABLED
+            // Undo button
             undoButton = new Button
             {
                 Location = new Point(10, 250),
@@ -170,31 +167,30 @@ namespace checkersclaude
 
         private void UndoButton_Click(object sender, EventArgs e)
         {
-            // In AI mode, undo the last two moves (AI's move and your move)
             if (mode == GameMode.HumanVsAI)
             {
+                // Undo AI's move and your move
                 if (game.CanUndo())
                 {
                     game.UndoMove(); // Undo AI's move
                     if (game.CanUndo())
                     {
                         game.UndoMove(); // Undo your move
-                        moveCount = Math.Max(0, moveCount - 2);
                     }
                 }
             }
             else
             {
                 // In human vs human mode, undo just one move
-                if (game.UndoMove())
-                {
-                    moveCount = Math.Max(0, moveCount - 1);
-                }
+                game.UndoMove();
             }
 
             lastMoveFrom = null;
             lastMoveTo = null;
-            moveHistoryLabel.Text = $"Move #{moveCount} - Undone";
+
+            var stats = game.GetGameStats();
+            moveHistoryLabel.Text = $"Move #{stats.MoveCount} - Undone";
+
             UpdateBoard();
         }
 
@@ -225,10 +221,14 @@ namespace checkersclaude
                 game.ResetGame();
                 lastMoveFrom = null;
                 lastMoveTo = null;
-                moveCount = 0;
-                redPiecesCaptured = 0;
-                blackPiecesCaptured = 0;
                 undoButton.Enabled = false;
+
+                // Clear AI cache if in AI mode
+                if (mode == GameMode.HumanVsAI && aiPlayer != null)
+                {
+                    aiPlayer.ClearCache();
+                }
+
                 moveHistoryLabel.Text = "Move #0 - Game Start";
                 UpdateBoard();
             }
@@ -236,20 +236,17 @@ namespace checkersclaude
 
         private string GetStatsText()
         {
-            int redPieces = game.Board.GetAllPieces(PieceColor.Red).Count;
-            int blackPieces = game.Board.GetAllPieces(PieceColor.Black).Count;
-            int redKings = game.Board.GetAllPieces(PieceColor.Red).FindAll(p => p.Type == PieceType.King).Count;
-            int blackKings = game.Board.GetAllPieces(PieceColor.Black).FindAll(p => p.Type == PieceType.King).Count;
+            var stats = game.GetGameStats();
 
             return $"📊 Game Statistics\n" +
                    $"━━━━━━━━━━━━━━\n" +
-                   $"Move #{moveCount}\n\n" +
-                   $"🔴 Red Pieces: {redPieces}\n" +
-                   $"    Kings: {redKings}\n" +
-                   $"    Captured: {blackPiecesCaptured}\n\n" +
-                   $"⚫ Black Pieces: {blackPieces}\n" +
-                   $"    Kings: {blackKings}\n" +
-                   $"    Captured: {redPiecesCaptured}";
+                   $"Move #{stats.MoveCount}\n\n" +
+                   $"🔴 Red Pieces: {stats.RedPieces}\n" +
+                   $"    Kings: {stats.RedKings}\n" +
+                   $"    Captured: {12 - stats.RedPieces}\n\n" +
+                   $"⚫ Black Pieces: {stats.BlackPieces}\n" +
+                   $"    Kings: {stats.BlackKings}\n" +
+                   $"    Captured: {12 - stats.BlackPieces}";
         }
 
         private void CreateBoard()
@@ -321,7 +318,7 @@ namespace checkersclaude
                         btn.FlatAppearance.BorderColor = Color.Green;
                     }
 
-                    // Show last move with colored squares only (no arrow)
+                    // Show last move with colored squares
                     if (lastMoveFrom.HasValue && lastMoveFrom.Value == pos)
                     {
                         btn.BackColor = Color.FromArgb(255, 200, 150); // Light orange
@@ -336,19 +333,6 @@ namespace checkersclaude
 
             UpdateStatus();
             statsLabel.Text = GetStatsText();
-        }
-
-        private string GetArrowDirection(Position from, Position to)
-        {
-            // This function is no longer used but kept for potential future use
-            int rowDiff = to.Row - from.Row;
-            int colDiff = to.Col - from.Col;
-
-            if (rowDiff < 0 && colDiff < 0) return "↖";
-            if (rowDiff < 0 && colDiff > 0) return "↗";
-            if (rowDiff > 0 && colDiff < 0) return "↙";
-            if (rowDiff > 0 && colDiff > 0) return "↘";
-            return "→";
         }
 
         private void UpdateStatus()
@@ -369,13 +353,13 @@ namespace checkersclaude
                     statusLabel.Text = mode == GameMode.HumanVsAI ? "🎉 You Win!" : "🏆 Red Wins!";
                     statusLabel.ForeColor = Color.FromArgb(200, 0, 0);
                     undoButton.Enabled = false;
-                    ShowGameOverDialog("Red Wins!", $"Congratulations! Red won in {moveCount} moves.");
+                    ShowGameOverDialog("Red Wins!", $"Congratulations! Red won in {game.GetGameStats().MoveCount} moves.");
                     break;
                 case GameState.BlackWins:
                     statusLabel.Text = mode == GameMode.HumanVsAI ? "😞 AI Wins!" : "🏆 Black Wins!";
                     statusLabel.ForeColor = Color.FromArgb(50, 50, 50);
                     undoButton.Enabled = false;
-                    ShowGameOverDialog("Black Wins!", $"Game Over! Black won in {moveCount} moves.");
+                    ShowGameOverDialog("Black Wins!", $"Game Over! Black won in {game.GetGameStats().MoveCount} moves.");
                     break;
             }
 
@@ -399,10 +383,14 @@ namespace checkersclaude
                 game.ResetGame();
                 lastMoveFrom = null;
                 lastMoveTo = null;
-                moveCount = 0;
-                redPiecesCaptured = 0;
-                blackPiecesCaptured = 0;
                 undoButton.Enabled = false;
+
+                // Clear AI cache if in AI mode
+                if (mode == GameMode.HumanVsAI && aiPlayer != null)
+                {
+                    aiPlayer.ClearCache();
+                }
+
                 moveHistoryLabel.Text = "Move #0 - Game Start";
                 UpdateBoard();
             }
@@ -430,10 +418,10 @@ namespace checkersclaude
                     // Track last move
                     lastMoveFrom = selectedFrom;
                     lastMoveTo = pos;
-                    moveCount++;
 
                     // Update move history
-                    string moveText = $"Move #{moveCount} - ";
+                    var stats = game.GetGameStats();
+                    string moveText = $"Move #{stats.MoveCount} - ";
                     moveText += game.State == GameState.BlackTurn ? "Red" : "Black";
                     moveText += $" moved {GetMoveDescription(selectedFrom, pos)}";
                     moveHistoryLabel.Text = moveText;
@@ -473,26 +461,16 @@ namespace checkersclaude
             var bestMove = aiPlayer.ChooseMove(game.Board, moves, PieceColor.Black);
             if (bestMove != null)
             {
-                // Track pieces before move for capture detection
-                int blackPiecesBefore = game.Board.GetAllPieces(PieceColor.Black).Count;
-
                 game.SelectPiece(bestMove.From);
                 game.MovePiece(bestMove.To);
 
                 // Track last move
                 lastMoveFrom = bestMove.From;
                 lastMoveTo = bestMove.To;
-                moveCount++;
-
-                // Check if red piece was captured
-                int redPiecesAfter = game.Board.GetAllPieces(PieceColor.Red).Count;
-                if (redPiecesAfter < 12 - redPiecesCaptured)
-                {
-                    redPiecesCaptured++;
-                }
 
                 // Update move history
-                string moveText = $"Move #{moveCount} - AI moved {GetMoveDescription(bestMove.From, bestMove.To)}";
+                var stats = game.GetGameStats();
+                string moveText = $"Move #{stats.MoveCount} - AI moved {GetMoveDescription(bestMove.From, bestMove.To)}";
                 moveHistoryLabel.Text = moveText;
 
                 UpdateBoard();

@@ -7,15 +7,14 @@ namespace checkersclaude
     {
         public Board Board { get; private set; }
         public GameState State { get; private set; }
+        public int MoveCount { get; private set; }
 
-        private readonly MoveValidator validator;
+        private MoveValidator validator;
         private Piece selectedPiece;
         private bool mustContinueJumping;
         private readonly Dictionary<string, int> stateHistory;
-        private int movesWithoutCapture;
-
-        // Undo functionality
-        private Stack<GameSnapshot> moveHistory;
+        private readonly Stack<GameSnapshot> moveHistory;
+        private const int MAX_MOVES_WITHOUT_CAPTURE = 50;
 
         public GameEngine()
         {
@@ -24,7 +23,7 @@ namespace checkersclaude
             State = GameState.RedTurn;
             stateHistory = new Dictionary<string, int>();
             moveHistory = new Stack<GameSnapshot>();
-            ResetTurnState();
+            MoveCount = 0;
         }
 
         public GameEngine(Board board)
@@ -34,14 +33,7 @@ namespace checkersclaude
             State = GameState.RedTurn;
             stateHistory = new Dictionary<string, int>();
             moveHistory = new Stack<GameSnapshot>();
-            ResetTurnState();
-        }
-
-        private void ResetTurnState()
-        {
-            selectedPiece = null;
-            mustContinueJumping = false;
-            movesWithoutCapture = 0;
+            MoveCount = 0;
         }
 
         public bool SelectPiece(Position pos)
@@ -50,10 +42,8 @@ namespace checkersclaude
                 return selectedPiece.Position == pos;
 
             var piece = Board.GetPiece(pos);
-            if (piece == null) return false;
-
-            var currentColor = State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
-            if (piece.Color != currentColor) return false;
+            if (piece == null || piece.Color != GetCurrentTurnColor())
+                return false;
 
             selectedPiece = piece;
             return true;
@@ -68,31 +58,49 @@ namespace checkersclaude
 
             if (selectedMove == null) return false;
 
-            // Save state before move for undo
+            ExecuteMove(selectedMove);
+            return true;
+        }
+
+        private void ExecuteMove(Move move)
+        {
             SaveGameState();
 
-            bool wasJump = selectedMove.IsJump;
+            bool wasJump = move.IsJump;
+            Board.ApplyMove(move);
+            validator.ClearCache(); // Clear cache after board change
 
-            Board.ApplyMove(selectedMove);
+            MoveCount++;
 
             if (wasJump)
             {
-                movesWithoutCapture = 0;
-
                 var additionalJumps = validator.GetValidJumps(selectedPiece);
                 if (additionalJumps.Count > 0)
                 {
                     mustContinueJumping = true;
-                    return true;
+                    return;
                 }
             }
-            else
-            {
-                movesWithoutCapture++;
-            }
 
-            EndTurn();
-            return true;
+            FinishTurn();
+        }
+
+        private void FinishTurn()
+        {
+            mustContinueJumping = false;
+            selectedPiece = null;
+
+            UpdateStateHistory();
+            SwitchTurn();
+            CheckWinCondition();
+        }
+
+        private void UpdateStateHistory()
+        {
+            string boardState = Board.GetStateString();
+            if (!stateHistory.ContainsKey(boardState))
+                stateHistory[boardState] = 0;
+            stateHistory[boardState]++;
         }
 
         private void SaveGameState()
@@ -101,16 +109,13 @@ namespace checkersclaude
             {
                 BoardState = Board.Clone(),
                 GameState = State,
-                MovesWithoutCapture = movesWithoutCapture,
+                MoveCount = MoveCount,
                 StateHistory = new Dictionary<string, int>(stateHistory)
             };
             moveHistory.Push(snapshot);
         }
 
-        public bool CanUndo()
-        {
-            return moveHistory.Count > 0;
-        }
+        public bool CanUndo() => moveHistory.Count > 0;
 
         public bool UndoMove()
         {
@@ -118,32 +123,18 @@ namespace checkersclaude
 
             var snapshot = moveHistory.Pop();
             Board = snapshot.BoardState.Clone();
+            validator = new MoveValidator(Board);
             State = snapshot.GameState;
-            movesWithoutCapture = snapshot.MovesWithoutCapture;
+            MoveCount = snapshot.MoveCount;
+
             stateHistory.Clear();
             foreach (var kvp in snapshot.StateHistory)
-            {
                 stateHistory[kvp.Key] = kvp.Value;
-            }
 
             selectedPiece = null;
             mustContinueJumping = false;
 
             return true;
-        }
-
-        private void EndTurn()
-        {
-            mustContinueJumping = false;
-            selectedPiece = null;
-
-            string boardState = Board.GetStateString();
-            if (!stateHistory.ContainsKey(boardState))
-                stateHistory[boardState] = 0;
-            stateHistory[boardState]++;
-
-            SwitchTurn();
-            CheckWinCondition();
         }
 
         private void SwitchTurn()
@@ -153,20 +144,26 @@ namespace checkersclaude
 
         private void CheckWinCondition()
         {
-            var currentColor = State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
+            var currentColor = GetCurrentTurnColor();
             var pieces = Board.GetAllPieces(currentColor);
 
-            if (pieces.Count == 0)
+            if (pieces.Count == 0 || !HasAnyValidMoves(currentColor))
             {
                 State = currentColor == PieceColor.Red ? GameState.BlackWins : GameState.RedWins;
                 return;
             }
 
-            bool hasValidMoves = pieces.Any(piece => validator.GetValidMoves(piece).Count > 0);
-            if (!hasValidMoves)
+            // Check for draw by repetition (optional)
+            if (stateHistory.Values.Any(count => count >= 3))
             {
-                State = currentColor == PieceColor.Red ? GameState.BlackWins : GameState.RedWins;
+                // Could add GameState.Draw if needed
             }
+        }
+
+        private bool HasAnyValidMoves(PieceColor color)
+        {
+            var pieces = Board.GetAllPieces(color);
+            return pieces.Any(piece => validator.GetValidMoves(piece).Count > 0);
         }
 
         public List<Position> GetValidMovePositions()
@@ -177,8 +174,7 @@ namespace checkersclaude
 
         public List<Move> GetAllValidMovesForCurrentPlayer()
         {
-            var currentColor = State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
-            return GetAllValidMoves(currentColor);
+            return GetAllValidMoves(GetCurrentTurnColor());
         }
 
         public List<Move> GetAllValidMoves(PieceColor color)
@@ -187,9 +183,7 @@ namespace checkersclaude
             var pieces = Board.GetAllPieces(color);
 
             foreach (var piece in pieces)
-            {
                 allMoves.AddRange(validator.GetValidMoves(piece));
-            }
 
             return allMoves;
         }
@@ -205,10 +199,13 @@ namespace checkersclaude
         public void ResetGame()
         {
             Board = new Board();
+            validator = new MoveValidator(Board);
             State = GameState.RedTurn;
+            MoveCount = 0;
             stateHistory.Clear();
             moveHistory.Clear();
-            ResetTurnState();
+            selectedPiece = null;
+            mustContinueJumping = false;
         }
 
         public bool IsGameOver() =>
@@ -223,6 +220,18 @@ namespace checkersclaude
 
         public PieceColor GetCurrentTurnColor() =>
             State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
+
+        public GameStats GetGameStats()
+        {
+            return new GameStats
+            {
+                MoveCount = MoveCount,
+                RedPieces = Board.GetAllPieces(PieceColor.Red).Count,
+                BlackPieces = Board.GetAllPieces(PieceColor.Black).Count,
+                RedKings = Board.GetAllPieces(PieceColor.Red).Count(p => p.Type == PieceType.King),
+                BlackKings = Board.GetAllPieces(PieceColor.Black).Count(p => p.Type == PieceType.King)
+            };
+        }
 
         public double EvaluatePosition(PieceColor forColor)
         {
@@ -246,12 +255,21 @@ namespace checkersclaude
         }
     }
 
-    // Snapshot class for undo functionality
+    // ==================== SNAPSHOT & STATS ====================
     public class GameSnapshot
     {
         public Board BoardState { get; set; }
         public GameState GameState { get; set; }
-        public int MovesWithoutCapture { get; set; }
+        public int MoveCount { get; set; }
         public Dictionary<string, int> StateHistory { get; set; }
+    }
+
+    public class GameStats
+    {
+        public int MoveCount { get; set; }
+        public int RedPieces { get; set; }
+        public int BlackPieces { get; set; }
+        public int RedKings { get; set; }
+        public int BlackKings { get; set; }
     }
 }
