@@ -31,7 +31,7 @@ namespace checkersclaude
         private void InitializeUI()
         {
             Text = "AI Training - Deep Learning System";
-            Size = new Size(900, 700);
+            Size = new Size(900, 710);
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -58,7 +58,7 @@ namespace checkersclaude
             {
                 Text = "Training Configuration",
                 Location = new Point(20, 50),
-                Size = new Size(420, 250),
+                Size = new Size(420, 280),
                 Font = new Font("Arial", 10, FontStyle.Bold)
             };
 
@@ -79,11 +79,14 @@ namespace checkersclaude
 
             Label lblInfo = new Label
             {
-                Text = "Higher population = better diversity\nMore generations = better training\nParallel processing uses multiple CPU cores",
                 Location = new Point(15, 210),
-                Size = new Size(390, 35),
-                Font = new Font("Arial", 8, FontStyle.Italic),
-                ForeColor = Color.Gray
+                Size = new Size(390, 60),
+                Font = new Font("Arial", 8),
+                ForeColor = Color.Gray,
+                Text = "• Higher population = better diversity\n" +
+                       "• More generations = better training\n" +
+                       "• Parallel processing uses multiple CPU cores\n" +
+                       "• Recommended: Pop=50, Gen=100 for good AI"
             };
             configGroup.Controls.Add(lblInfo);
 
@@ -114,7 +117,7 @@ namespace checkersclaude
             {
                 Text = "Controls",
                 Location = new Point(460, 50),
-                Size = new Size(400, 250),
+                Size = new Size(400, 280),
                 Font = new Font("Arial", 10, FontStyle.Bold)
             };
 
@@ -145,13 +148,15 @@ namespace checkersclaude
 
             Label lblStats = new Label
             {
-                Text = "Architecture: Input(64) → Hidden(128→64→32) → Output(1)\n" +
-                       "Algorithm: Genetic Algorithm with Tournament Selection\n" +
-                       "Training Method: Self-Play Round-Robin Tournament",
-                Location = new Point(20, 195),
-                Size = new Size(360, 45),
+                Location = new Point(20, 200),
+                Size = new Size(360, 70),
                 Font = new Font("Arial", 8),
-                ForeColor = Color.DarkSlateGray
+                ForeColor = Color.DarkSlateGray,
+                Text = "Neural Network Architecture:\n" +
+                       "• Input Layer: 64 neurons (board state)\n" +
+                       "• Hidden Layers: 128 → 64 → 32 neurons\n" +
+                       "• Output Layer: 1 neuron (evaluation)\n\n" +
+                       "Training: Genetic Algorithm + Self-Play"
             };
             controlGroup.Controls.Add(lblStats);
 
@@ -181,15 +186,15 @@ namespace checkersclaude
             GroupBox logGroup = new GroupBox
             {
                 Text = "Training Log",
-                Location = new Point(20, 310),
-                Size = new Size(420, 340),
+                Location = new Point(20, 340),
+                Size = new Size(420, 320),
                 Font = new Font("Arial", 10, FontStyle.Bold)
             };
 
             txtLog = new TextBox
             {
                 Location = new Point(10, 25),
-                Size = new Size(400, 305),
+                Size = new Size(400, 285),
                 Multiline = true,
                 ScrollBars = ScrollBars.Vertical,
                 ReadOnly = true,
@@ -203,15 +208,15 @@ namespace checkersclaude
             GroupBox chartGroup = new GroupBox
             {
                 Text = "Fitness Progress",
-                Location = new Point(460, 310),
-                Size = new Size(400, 340),
+                Location = new Point(460, 340),
+                Size = new Size(400, 320),
                 Font = new Font("Arial", 10, FontStyle.Bold)
             };
 
             chartPanel = new Panel
             {
                 Location = new Point(10, 25),
-                Size = new Size(380, 305),
+                Size = new Size(380, 285),
                 BackColor = Color.White,
                 BorderStyle = BorderStyle.FixedSingle
             };

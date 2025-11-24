@@ -14,12 +14,16 @@ namespace checkersclaude
         private readonly Dictionary<string, int> stateHistory;
         private int movesWithoutCapture;
 
+        // Undo functionality
+        private Stack<GameSnapshot> moveHistory;
+
         public GameEngine()
         {
             Board = new Board();
             validator = new MoveValidator(Board);
             State = GameState.RedTurn;
             stateHistory = new Dictionary<string, int>();
+            moveHistory = new Stack<GameSnapshot>();
             ResetTurnState();
         }
 
@@ -29,6 +33,7 @@ namespace checkersclaude
             validator = new MoveValidator(Board);
             State = GameState.RedTurn;
             stateHistory = new Dictionary<string, int>();
+            moveHistory = new Stack<GameSnapshot>();
             ResetTurnState();
         }
 
@@ -63,6 +68,9 @@ namespace checkersclaude
 
             if (selectedMove == null) return false;
 
+            // Save state before move for undo
+            SaveGameState();
+
             bool wasJump = selectedMove.IsJump;
 
             Board.ApplyMove(selectedMove);
@@ -84,6 +92,43 @@ namespace checkersclaude
             }
 
             EndTurn();
+            return true;
+        }
+
+        private void SaveGameState()
+        {
+            var snapshot = new GameSnapshot
+            {
+                BoardState = Board.Clone(),
+                GameState = State,
+                MovesWithoutCapture = movesWithoutCapture,
+                StateHistory = new Dictionary<string, int>(stateHistory)
+            };
+            moveHistory.Push(snapshot);
+        }
+
+        public bool CanUndo()
+        {
+            return moveHistory.Count > 0;
+        }
+
+        public bool UndoMove()
+        {
+            if (!CanUndo()) return false;
+
+            var snapshot = moveHistory.Pop();
+            Board = snapshot.BoardState.Clone();
+            State = snapshot.GameState;
+            movesWithoutCapture = snapshot.MovesWithoutCapture;
+            stateHistory.Clear();
+            foreach (var kvp in snapshot.StateHistory)
+            {
+                stateHistory[kvp.Key] = kvp.Value;
+            }
+
+            selectedPiece = null;
+            mustContinueJumping = false;
+
             return true;
         }
 
@@ -162,6 +207,7 @@ namespace checkersclaude
             Board = new Board();
             State = GameState.RedTurn;
             stateHistory.Clear();
+            moveHistory.Clear();
             ResetTurnState();
         }
 
@@ -198,5 +244,14 @@ namespace checkersclaude
 
             return score;
         }
+    }
+
+    // Snapshot class for undo functionality
+    public class GameSnapshot
+    {
+        public Board BoardState { get; set; }
+        public GameState GameState { get; set; }
+        public int MovesWithoutCapture { get; set; }
+        public Dictionary<string, int> StateHistory { get; set; }
     }
 }

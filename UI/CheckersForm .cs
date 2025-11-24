@@ -36,7 +36,7 @@ namespace checkersclaude
         private void InitializeUI()
         {
             Text = mode == GameMode.HumanVsAI ? "Checkers - You vs AI" : "Checkers - Two Players";
-            ClientSize = new Size(SquareSize * 8 + 250, SquareSize * 8 + 80);
+            ClientSize = new Size(SquareSize * 8 + 260, SquareSize * 8 + 100);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
@@ -46,7 +46,7 @@ namespace checkersclaude
             statusLabel = new Label
             {
                 Location = new Point(10, SquareSize * 8 + 10),
-                Size = new Size(300, 30),
+                Size = new Size(400, 30),
                 Font = new Font("Arial", 14, FontStyle.Bold),
                 Text = mode == GameMode.HumanVsAI ? "Your Turn (Red)" : "Red's Turn"
             };
@@ -55,8 +55,8 @@ namespace checkersclaude
             // Move history label
             moveHistoryLabel = new Label
             {
-                Location = new Point(10, SquareSize * 8 + 45),
-                Size = new Size(300, 20),
+                Location = new Point(10, SquareSize * 8 + 50),
+                Size = new Size(500, 25),
                 Font = new Font("Arial", 9),
                 Text = "Move #0 - Game Start",
                 ForeColor = Color.Gray
@@ -67,9 +67,10 @@ namespace checkersclaude
             Panel sidePanel = new Panel
             {
                 Location = new Point(SquareSize * 8 + 10, 10),
-                Size = new Size(230, SquareSize * 8),
+                Size = new Size(240, SquareSize * 8 + 80),
                 BackColor = Color.FromArgb(250, 250, 250),
-                BorderStyle = BorderStyle.FixedSingle
+                BorderStyle = BorderStyle.FixedSingle,
+                AutoScroll = true
             };
             Controls.Add(sidePanel);
 
@@ -77,8 +78,8 @@ namespace checkersclaude
             statsLabel = new Label
             {
                 Location = new Point(10, 10),
-                Size = new Size(210, 150),
-                Font = new Font("Arial", 10),
+                Size = new Size(220, 180),
+                Font = new Font("Arial", 9),
                 Text = GetStatsText(),
                 BackColor = Color.Transparent
             };
@@ -87,10 +88,10 @@ namespace checkersclaude
             // Reset button
             resetButton = new Button
             {
-                Location = new Point(10, 170),
-                Size = new Size(210, 40),
+                Location = new Point(10, 200),
+                Size = new Size(220, 40),
                 Text = "🔄 New Game",
-                Font = new Font("Arial", 11, FontStyle.Bold),
+                Font = new Font("Arial", 10, FontStyle.Bold),
                 BackColor = Color.FromArgb(220, 53, 69),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
@@ -100,40 +101,43 @@ namespace checkersclaude
             resetButton.Click += ResetButton_Click;
             sidePanel.Controls.Add(resetButton);
 
-            // Undo button (disabled for AI mode)
+            // Undo button - NOW ENABLED
             undoButton = new Button
             {
-                Location = new Point(10, 220),
-                Size = new Size(210, 40),
+                Location = new Point(10, 250),
+                Size = new Size(220, 40),
                 Text = "↶ Undo Move",
-                Font = new Font("Arial", 11, FontStyle.Bold),
+                Font = new Font("Arial", 10, FontStyle.Bold),
                 BackColor = Color.FromArgb(108, 117, 125),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                Enabled = false // We'll implement undo later if needed
+                Enabled = false
             };
             undoButton.FlatAppearance.BorderSize = 0;
+            undoButton.Click += UndoButton_Click;
             sidePanel.Controls.Add(undoButton);
 
             // Game info
             Label infoLabel = new Label
             {
-                Location = new Point(10, 280),
-                Size = new Size(210, 100),
-                Font = new Font("Arial", 9),
+                Location = new Point(10, 300),
+                Size = new Size(220, 140),
+                Font = new Font("Arial", 8),
                 Text = mode == GameMode.HumanVsAI ?
                     "🎮 Playing vs AI\n\n" +
                     "• You are Red (●)\n" +
                     "• AI is Black (●)\n" +
-                    "• Click to select\n" +
+                    "• Click to select piece\n" +
                     "• Click again to move\n" +
-                    "• Must jump if possible" :
+                    "• Must jump when\n  possible\n" +
+                    "• Undo only works\n  on your moves" :
                     "👥 Two Player Mode\n\n" +
                     "• Red goes first\n" +
-                    "• Click to select\n" +
+                    "• Click to select piece\n" +
                     "• Click again to move\n" +
-                    "• Must jump if possible",
+                    "• Must jump when\n  possible\n" +
+                    "• Press Undo to take\n  back last move",
                 ForeColor = Color.DarkSlateGray,
                 BackColor = Color.Transparent
             };
@@ -142,8 +146,8 @@ namespace checkersclaude
             // Legend
             Panel legendPanel = new Panel
             {
-                Location = new Point(10, SquareSize * 8 - 120),
-                Size = new Size(210, 110),
+                Location = new Point(10, 450),
+                Size = new Size(220, 110),
                 BackColor = Color.White,
                 BorderStyle = BorderStyle.FixedSingle
             };
@@ -152,16 +156,46 @@ namespace checkersclaude
             Label legendTitle = new Label
             {
                 Location = new Point(5, 5),
-                Size = new Size(200, 20),
+                Size = new Size(210, 18),
                 Text = "Legend:",
                 Font = new Font("Arial", 9, FontStyle.Bold)
             };
             legendPanel.Controls.Add(legendTitle);
 
-            CreateLegendItem(legendPanel, "● = Regular Piece", Color.Black, 30);
-            CreateLegendItem(legendPanel, "♔ = King", Color.Black, 50);
-            CreateLegendItem(legendPanel, "🟡 = Selected", Color.Gold, 70);
-            CreateLegendItem(legendPanel, "🟢 = Valid Move", Color.LimeGreen, 90);
+            CreateLegendItem(legendPanel, "● = Regular", Color.Black, 28);
+            CreateLegendItem(legendPanel, "♔ = King", Color.Black, 48);
+            CreateLegendItem(legendPanel, "🟡 = Selected", Color.FromArgb(255, 215, 0), 68);
+            CreateLegendItem(legendPanel, "🟢 = Valid Move", Color.FromArgb(50, 205, 50), 88);
+        }
+
+        private void UndoButton_Click(object sender, EventArgs e)
+        {
+            // In AI mode, undo the last two moves (AI's move and your move)
+            if (mode == GameMode.HumanVsAI)
+            {
+                if (game.CanUndo())
+                {
+                    game.UndoMove(); // Undo AI's move
+                    if (game.CanUndo())
+                    {
+                        game.UndoMove(); // Undo your move
+                        moveCount = Math.Max(0, moveCount - 2);
+                    }
+                }
+            }
+            else
+            {
+                // In human vs human mode, undo just one move
+                if (game.UndoMove())
+                {
+                    moveCount = Math.Max(0, moveCount - 1);
+                }
+            }
+
+            lastMoveFrom = null;
+            lastMoveTo = null;
+            moveHistoryLabel.Text = $"Move #{moveCount} - Undone";
+            UpdateBoard();
         }
 
         private void CreateLegendItem(Panel parent, string text, Color color, int y)
@@ -169,23 +203,35 @@ namespace checkersclaude
             Label item = new Label
             {
                 Location = new Point(10, y),
-                Size = new Size(190, 18),
+                Size = new Size(200, 18),
                 Text = text,
                 Font = new Font("Arial", 8),
-                ForeColor = color
+                ForeColor = color,
+                AutoSize = false
             };
             parent.Controls.Add(item);
         }
 
         private void ResetButton_Click(object sender, EventArgs e)
         {
-            game.ResetGame();
-            lastMoveFrom = null;
-            lastMoveTo = null;
-            moveCount = 0;
-            redPiecesCaptured = 0;
-            blackPiecesCaptured = 0;
-            UpdateBoard();
+            var result = MessageBox.Show(
+                "Are you sure you want to start a new game?\nCurrent progress will be lost.",
+                "New Game",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (result == DialogResult.Yes)
+            {
+                game.ResetGame();
+                lastMoveFrom = null;
+                lastMoveTo = null;
+                moveCount = 0;
+                redPiecesCaptured = 0;
+                blackPiecesCaptured = 0;
+                undoButton.Enabled = false;
+                moveHistoryLabel.Text = "Move #0 - Game Start";
+                UpdateBoard();
+            }
         }
 
         private string GetStatsText()
@@ -195,14 +241,15 @@ namespace checkersclaude
             int redKings = game.Board.GetAllPieces(PieceColor.Red).FindAll(p => p.Type == PieceType.King).Count;
             int blackKings = game.Board.GetAllPieces(PieceColor.Black).FindAll(p => p.Type == PieceType.King).Count;
 
-            return $"📊 Game Statistics\n\n" +
+            return $"📊 Game Statistics\n" +
+                   $"━━━━━━━━━━━━━━\n" +
                    $"Move #{moveCount}\n\n" +
                    $"🔴 Red Pieces: {redPieces}\n" +
-                   $"   Kings: {redKings}\n" +
-                   $"   Captured: {blackPiecesCaptured}\n\n" +
+                   $"    Kings: {redKings}\n" +
+                   $"    Captured: {blackPiecesCaptured}\n\n" +
                    $"⚫ Black Pieces: {blackPieces}\n" +
-                   $"   Kings: {blackKings}\n" +
-                   $"   Captured: {redPiecesCaptured}";
+                   $"    Kings: {blackKings}\n" +
+                   $"    Captured: {redPiecesCaptured}";
         }
 
         private void CreateBoard()
@@ -274,24 +321,15 @@ namespace checkersclaude
                         btn.FlatAppearance.BorderColor = Color.Green;
                     }
 
-                    // Show last move with arrow
+                    // Show last move with colored squares only (no arrow)
                     if (lastMoveFrom.HasValue && lastMoveFrom.Value == pos)
                     {
-                        btn.FlatAppearance.BorderSize = 3;
-                        btn.FlatAppearance.BorderColor = Color.Orange;
+                        btn.BackColor = Color.FromArgb(255, 200, 150); // Light orange
                     }
 
                     if (lastMoveTo.HasValue && lastMoveTo.Value == pos)
                     {
-                        btn.FlatAppearance.BorderSize = 3;
-                        btn.FlatAppearance.BorderColor = Color.DarkOrange;
-
-                        // Add arrow indicator
-                        if (piece != null)
-                        {
-                            string arrow = GetArrowDirection(lastMoveFrom.Value, lastMoveTo.Value);
-                            btn.Text = arrow + " " + btn.Text;
-                        }
+                        btn.BackColor = Color.FromArgb(255, 165, 100); // Darker orange
                     }
                 }
             }
@@ -302,6 +340,7 @@ namespace checkersclaude
 
         private string GetArrowDirection(Position from, Position to)
         {
+            // This function is no longer used but kept for potential future use
             int rowDiff = to.Row - from.Row;
             int colDiff = to.Col - from.Col;
 
@@ -327,15 +366,45 @@ namespace checkersclaude
                         MakeAIMove();
                     break;
                 case GameState.RedWins:
-                    statusLabel.Text = mode == GameMode.HumanVsAI ? "You Win!" : "Red Wins!";
+                    statusLabel.Text = mode == GameMode.HumanVsAI ? "🎉 You Win!" : "🏆 Red Wins!";
                     statusLabel.ForeColor = Color.FromArgb(200, 0, 0);
-                    MessageBox.Show(statusLabel.Text, "Game Over", MessageBoxButtons.OK);
+                    undoButton.Enabled = false;
+                    ShowGameOverDialog("Red Wins!", $"Congratulations! Red won in {moveCount} moves.");
                     break;
                 case GameState.BlackWins:
-                    statusLabel.Text = mode == GameMode.HumanVsAI ? "AI Wins!" : "Black Wins!";
+                    statusLabel.Text = mode == GameMode.HumanVsAI ? "😞 AI Wins!" : "🏆 Black Wins!";
                     statusLabel.ForeColor = Color.FromArgb(50, 50, 50);
-                    MessageBox.Show(statusLabel.Text, "Game Over", MessageBoxButtons.OK);
+                    undoButton.Enabled = false;
+                    ShowGameOverDialog("Black Wins!", $"Game Over! Black won in {moveCount} moves.");
                     break;
+            }
+
+            // Update undo button state
+            if (!game.IsGameOver())
+            {
+                undoButton.Enabled = game.CanUndo();
+            }
+        }
+
+        private void ShowGameOverDialog(string title, string message)
+        {
+            var result = MessageBox.Show(
+                message + "\n\nWould you like to play again?",
+                title,
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information);
+
+            if (result == DialogResult.Yes)
+            {
+                game.ResetGame();
+                lastMoveFrom = null;
+                lastMoveTo = null;
+                moveCount = 0;
+                redPiecesCaptured = 0;
+                blackPiecesCaptured = 0;
+                undoButton.Enabled = false;
+                moveHistoryLabel.Text = "Move #0 - Game Start";
+                UpdateBoard();
             }
         }
 
@@ -368,6 +437,9 @@ namespace checkersclaude
                     moveText += game.State == GameState.BlackTurn ? "Red" : "Black";
                     moveText += $" moved {GetMoveDescription(selectedFrom, pos)}";
                     moveHistoryLabel.Text = moveText;
+
+                    // Enable undo button after first move
+                    undoButton.Enabled = true;
 
                     UpdateBoard();
                 }
