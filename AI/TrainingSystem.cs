@@ -1,12 +1,7 @@
 ﻿// ============================================================================
-// REPLACE YOUR ENTIRE AI/TrainingSystem.cs FILE WITH THIS CODE
+// FIXED TRAINING SYSTEM - Bug Fixed!
 // ============================================================================
-// Instructions:
-// 1. Open your AI/TrainingSystem.cs file
-// 2. Select ALL content (Ctrl+A)
-// 3. Delete it
-// 4. Paste this entire file
-// 5. Save
+// Fixed: NullReferenceException in ExecuteMove
 // ============================================================================
 
 using System;
@@ -18,6 +13,8 @@ namespace checkersclaude
 {
     public class TrainingSystem
     {
+        #region Properties
+
         public List<AIPlayer> Population { get; private set; }
         public int Generation { get; private set; }
         public AIPlayer BestPlayer { get; private set; }
@@ -32,6 +29,10 @@ namespace checkersclaude
         private double historicalBestFitness = 0;
         private int generationsWithoutImprovement = 0;
         private const int DiversityResetThreshold = 20;
+
+        #endregion
+
+        #region Initialization
 
         public TrainingSystem(TrainingConfig config)
         {
@@ -48,17 +49,32 @@ namespace checkersclaude
 
         private void InitializePopulation()
         {
-            Population = new List<AIPlayer>();
+            Population = new List<AIPlayer>(populationSize);
             for (int i = 0; i < populationSize; i++)
             {
                 Population.Add(new AIPlayer(random));
             }
         }
 
+        #endregion
+
+        #region Main Training Loop
+
         public void RunGeneration()
         {
             Generation++;
 
+            ResetPlayerStats();
+            RunTournament();
+            CalculateAllFitness();
+            UpdateBestPlayer();
+            UpdateGenerationStats();
+            EvolvePopulation();
+            CheckForStagnation();
+        }
+
+        private void ResetPlayerStats()
+        {
             foreach (var player in Population)
             {
                 player.Stats.GamesPlayed = 0;
@@ -66,14 +82,18 @@ namespace checkersclaude
                 player.Stats.Losses = 0;
                 player.Stats.Draws = 0;
             }
+        }
 
-            RunImprovedTournament();
-
+        private void CalculateAllFitness()
+        {
             foreach (var player in Population)
             {
                 player.CalculateFitness();
             }
+        }
 
+        private void UpdateBestPlayer()
+        {
             BestPlayer = Population.OrderByDescending(p => p.Brain.Fitness).First();
 
             if (BestPlayer.Brain.Fitness > historicalBestFitness)
@@ -85,282 +105,9 @@ namespace checkersclaude
             {
                 generationsWithoutImprovement++;
             }
-
-            UpdateStats();
-            EvolvePopulation();
-
-            if (generationsWithoutImprovement >= DiversityResetThreshold)
-            {
-                InjectDiversity();
-                generationsWithoutImprovement = 0;
-            }
         }
 
-        private void RunImprovedTournament()
-        {
-            int gamesPerPair = config.GamesPerPair;
-            var matchups = GenerateImprovedMatchups();
-
-            if (config.UseParallelProcessing)
-            {
-                Parallel.ForEach(matchups, matchup =>
-                {
-                    for (int game = 0; game < gamesPerPair; game++)
-                    {
-                        AIPlayer red = game % 2 == 0 ? matchup.Item1 : matchup.Item2;
-                        AIPlayer black = game % 2 == 0 ? matchup.Item2 : matchup.Item1;
-                        PlayGame(red, black);
-                    }
-                });
-            }
-            else
-            {
-                foreach (var matchup in matchups)
-                {
-                    for (int game = 0; game < gamesPerPair; game++)
-                    {
-                        AIPlayer red = game % 2 == 0 ? matchup.Item1 : matchup.Item2;
-                        AIPlayer black = game % 2 == 0 ? matchup.Item2 : matchup.Item1;
-                        PlayGame(red, black);
-                    }
-                }
-            }
-        }
-
-        private List<Tuple<AIPlayer, AIPlayer>> GenerateImprovedMatchups()
-        {
-            var matchups = new List<Tuple<AIPlayer, AIPlayer>>();
-
-            var sortedPopulation = Generation > 1
-                ? Population.OrderByDescending(p => p.Brain.Fitness).ToList()
-                : Population.ToList();
-
-            for (int i = 0; i < Population.Count; i++)
-            {
-                int opponentsPerPlayer = Math.Min(config.OpponentsPerPlayer, Population.Count - 1);
-
-                for (int j = 0; j < opponentsPerPlayer; j++)
-                {
-                    int opponentIndex;
-
-                    if (random.NextDouble() < 0.6 && Generation > 1)
-                    {
-                        int minRank = Math.Max(0, i - 3);
-                        int maxRank = Math.Min(sortedPopulation.Count - 1, i + 3);
-                        opponentIndex = random.Next(minRank, maxRank + 1);
-                    }
-                    else
-                    {
-                        opponentIndex = random.Next(Population.Count);
-                    }
-
-                    if (opponentIndex != i)
-                    {
-                        matchups.Add(new Tuple<AIPlayer, AIPlayer>(
-                            Population[i],
-                            sortedPopulation[opponentIndex]));
-                    }
-                }
-            }
-
-            return matchups;
-        }
-
-        private void PlayGame(AIPlayer redPlayer, AIPlayer blackPlayer)
-        {
-            GameEngine game = new GameEngine();
-            int moveCount = 0;
-            int maxMoves = config.MaxMovesPerGame;
-
-            Dictionary<string, int> stateHistory = new Dictionary<string, int>();
-
-            while (game.State != GameState.RedWins &&
-                   game.State != GameState.BlackWins &&
-                   moveCount < maxMoves)
-            {
-                AIPlayer currentPlayer = game.State == GameState.RedTurn ? redPlayer : blackPlayer;
-                PieceColor currentColor = game.State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
-
-                List<Move> validMoves = GetAllValidMoves(game, currentColor);
-
-                if (validMoves.Count == 0)
-                    break;
-
-                Move chosenMove = currentPlayer.ChooseMove(game.Board, validMoves, currentColor);
-
-                if (chosenMove == null)
-                    break;
-
-                if (chosenMove.IsJump)
-                {
-                    currentPlayer.Stats.PiecesCaptured += chosenMove.JumpedPositions.Count;
-
-                    foreach (var jumpedPos in chosenMove.JumpedPositions)
-                    {
-                        Piece captured = game.Board.GetPiece(jumpedPos);
-                        if (captured?.Type == PieceType.King)
-                        {
-                            currentPlayer.Stats.KingsCaptured++;
-                            AIPlayer opponent = currentPlayer == redPlayer ? blackPlayer : redPlayer;
-                            opponent.Stats.KingsLost++;
-                        }
-                    }
-                }
-
-                game.SelectPiece(chosenMove.From);
-                game.MovePiece(chosenMove.To);
-
-                Piece movedPiece = game.Board.GetPiece(chosenMove.To);
-                if (movedPiece != null && movedPiece.Type == PieceType.King)
-                {
-                    if (chosenMove.From.Row != chosenMove.To.Row)
-                    {
-                        int kingRow = currentColor == PieceColor.Red ? 0 : 7;
-                        if (chosenMove.To.Row == kingRow)
-                        {
-                            currentPlayer.Stats.KingsMade++;
-                        }
-                    }
-                }
-
-                string boardState = game.Board.GetStateString();
-                if (!stateHistory.ContainsKey(boardState))
-                    stateHistory[boardState] = 0;
-                stateHistory[boardState]++;
-
-                if (stateHistory[boardState] >= 3)
-                {
-                    redPlayer.UpdateGameResult(GameResult.Draw,
-                        game.Board.GetAllPieces(PieceColor.Red).Count,
-                        game.Board.GetAllPieces(PieceColor.Black).Count);
-                    blackPlayer.UpdateGameResult(GameResult.Draw,
-                        game.Board.GetAllPieces(PieceColor.Black).Count,
-                        game.Board.GetAllPieces(PieceColor.Red).Count);
-                    return;
-                }
-
-                moveCount++;
-            }
-
-            int redPieces = game.Board.GetAllPieces(PieceColor.Red).Count;
-            int blackPieces = game.Board.GetAllPieces(PieceColor.Black).Count;
-
-            if (game.State == GameState.RedWins)
-            {
-                redPlayer.UpdateGameResult(GameResult.Win, redPieces, blackPieces);
-                blackPlayer.UpdateGameResult(GameResult.Loss, blackPieces, redPieces);
-            }
-            else if (game.State == GameState.BlackWins)
-            {
-                blackPlayer.UpdateGameResult(GameResult.Win, blackPieces, redPieces);
-                redPlayer.UpdateGameResult(GameResult.Loss, redPieces, blackPieces);
-            }
-            else
-            {
-                redPlayer.UpdateGameResult(GameResult.Draw, redPieces, blackPieces);
-                blackPlayer.UpdateGameResult(GameResult.Draw, blackPieces, redPieces);
-            }
-        }
-
-        private List<Move> GetAllValidMoves(GameEngine game, PieceColor color)
-        {
-            List<Move> allMoves = new List<Move>();
-            List<Piece> pieces = game.Board.GetAllPieces(color);
-            MoveValidator validator = new MoveValidator(game.Board);
-
-            foreach (Piece piece in pieces)
-            {
-                List<Move> pieceMoves = validator.GetValidMoves(piece);
-                allMoves.AddRange(pieceMoves);
-            }
-
-            return allMoves;
-        }
-
-        private void EvolvePopulation()
-        {
-            List<AIPlayer> newGeneration = new List<AIPlayer>();
-
-            var sortedPopulation = Population.OrderByDescending(p => p.Brain.Fitness).ToList();
-
-            int eliteCount = Math.Max(2, (int)(populationSize * elitePercentage));
-            for (int i = 0; i < eliteCount; i++)
-            {
-                newGeneration.Add(sortedPopulation[i].Clone());
-            }
-
-            while (newGeneration.Count < populationSize)
-            {
-                AIPlayer parent1 = TournamentSelection(sortedPopulation, 5);
-                AIPlayer parent2 = TournamentSelection(sortedPopulation, 5);
-
-                AIPlayer child = parent1.Crossover(parent2, random);
-
-                double adaptiveMutationRate = CalculateAdaptiveMutationRate(parent1, parent2);
-                child.Mutate(adaptiveMutationRate);
-
-                newGeneration.Add(child);
-            }
-
-            Population = newGeneration;
-        }
-
-        private double CalculateAdaptiveMutationRate(AIPlayer parent1, AIPlayer parent2)
-        {
-            double rate = mutationRate;
-
-            double avgParentFitness = (parent1.Brain.Fitness + parent2.Brain.Fitness) / 2.0;
-            double bestFitness = BestPlayer?.Brain.Fitness ?? 1.0;
-
-            if (bestFitness > 0)
-            {
-                double relativeWeakness = 1.0 - (avgParentFitness / bestFitness);
-                rate += relativeWeakness * 0.15;
-            }
-
-            if (generationsWithoutImprovement > 5)
-            {
-                rate += 0.05 * (generationsWithoutImprovement / 5.0);
-            }
-
-            return Math.Min(rate, 0.5);
-        }
-
-        private AIPlayer TournamentSelection(List<AIPlayer> sortedPopulation, int tournamentSize)
-        {
-            tournamentSize = Math.Min(tournamentSize, sortedPopulation.Count);
-            AIPlayer best = sortedPopulation[random.Next(sortedPopulation.Count)];
-
-            for (int i = 1; i < tournamentSize; i++)
-            {
-                AIPlayer contestant = sortedPopulation[random.Next(sortedPopulation.Count)];
-                if (contestant.Brain.Fitness > best.Brain.Fitness)
-                    best = contestant;
-            }
-
-            return best;
-        }
-
-        private void InjectDiversity()
-        {
-            int replaceCount = (int)(populationSize * 0.2);
-            var sortedPopulation = Population.OrderBy(p => p.Brain.Fitness).ToList();
-
-            for (int i = 0; i < replaceCount; i++)
-            {
-                sortedPopulation[i] = new AIPlayer(random);
-            }
-
-            int mutateStart = replaceCount;
-            int mutateEnd = mutateStart + replaceCount;
-
-            for (int i = mutateStart; i < mutateEnd && i < sortedPopulation.Count; i++)
-            {
-                sortedPopulation[i].Mutate(0.3);
-            }
-        }
-
-        private void UpdateStats()
+        private void UpdateGenerationStats()
         {
             CurrentStats.Generation = Generation;
             CurrentStats.BestFitness = BestPlayer.Brain.Fitness;
@@ -370,20 +117,345 @@ namespace checkersclaude
             CurrentStats.BestGamesPlayed = BestPlayer.Stats.GamesPlayed;
         }
 
+        private void CheckForStagnation()
+        {
+            if (generationsWithoutImprovement >= DiversityResetThreshold)
+            {
+                InjectDiversity();
+                generationsWithoutImprovement = 0;
+            }
+        }
+
+        #endregion
+
+        #region Tournament
+
+        private void RunTournament()
+        {
+            var matchups = GenerateMatchups();
+
+            if (config.UseParallelProcessing)
+            {
+                Parallel.ForEach(matchups, matchup => PlayMatchup(matchup));
+            }
+            else
+            {
+                foreach (var matchup in matchups)
+                {
+                    PlayMatchup(matchup);
+                }
+            }
+        }
+
+        private void PlayMatchup(Tuple<AIPlayer, AIPlayer> matchup)
+        {
+            for (int game = 0; game < config.GamesPerPair; game++)
+            {
+                // Alternate colors for fairness
+                bool redFirst = game % 2 == 0;
+                AIPlayer red = redFirst ? matchup.Item1 : matchup.Item2;
+                AIPlayer black = redFirst ? matchup.Item2 : matchup.Item1;
+
+                PlayGame(red, black);
+            }
+        }
+
+        private List<Tuple<AIPlayer, AIPlayer>> GenerateMatchups()
+        {
+            var matchups = new List<Tuple<AIPlayer, AIPlayer>>();
+            var sortedPop = Generation > 1
+                ? Population.OrderByDescending(p => p.Brain.Fitness).ToList()
+                : Population.ToList();
+
+            for (int i = 0; i < Population.Count; i++)
+            {
+                int numOpponents = Math.Min(config.OpponentsPerPlayer, Population.Count - 1);
+
+                for (int j = 0; j < numOpponents; j++)
+                {
+                    int opponentIdx = SelectOpponent(i, sortedPop.Count);
+                    if (opponentIdx != i)
+                    {
+                        matchups.Add(new Tuple<AIPlayer, AIPlayer>(
+                            Population[i],
+                            sortedPop[opponentIdx]));
+                    }
+                }
+            }
+
+            return matchups;
+        }
+
+        private int SelectOpponent(int playerIndex, int populationCount)
+        {
+            // 60% similar skill, 40% random (better learning)
+            if (Generation > 1 && random.NextDouble() < 0.6)
+            {
+                // Similar skill opponent (within ±3 ranks)
+                int minRank = Math.Max(0, playerIndex - 3);
+                int maxRank = Math.Min(populationCount - 1, playerIndex + 3);
+                return random.Next(minRank, maxRank + 1);
+            }
+            else
+            {
+                // Random opponent for diversity
+                return random.Next(populationCount);
+            }
+        }
+
+        #endregion
+
+        #region Game Simulation
+
+        private void PlayGame(AIPlayer redPlayer, AIPlayer blackPlayer)
+        {
+            GameEngine game = new GameEngine();
+            Dictionary<string, int> stateHistory = new Dictionary<string, int>();
+            int moveCount = 0;
+
+            while (!game.IsGameOver() && moveCount < config.MaxMovesPerGame)
+            {
+                AIPlayer currentPlayer = game.State == GameState.RedTurn ? redPlayer : blackPlayer;
+                PieceColor currentColor = game.State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
+
+                Move move = SelectMove(game, currentPlayer, currentColor);
+                if (move == null) break;
+
+                // Track stats and execute move
+                TrackMoveStats(currentPlayer, redPlayer, blackPlayer, move, game);
+
+                game.SelectPiece(move.From);
+                game.MovePiece(move.To);
+
+                // Check for draw by repetition
+                if (IsDrawByRepetition(game.Board, stateHistory))
+                {
+                    RecordDraw(redPlayer, blackPlayer, game.Board);
+                    return;
+                }
+
+                moveCount++;
+            }
+
+            RecordGameResult(game, redPlayer, blackPlayer);
+        }
+
+        private Move SelectMove(GameEngine game, AIPlayer player, PieceColor color)
+        {
+            List<Move> validMoves = GetAllValidMoves(game, color);
+            if (validMoves.Count == 0) return null;
+            return player.ChooseMove(game.Board, validMoves, color);
+        }
+
+        private void TrackMoveStats(AIPlayer currentPlayer, AIPlayer redPlayer, AIPlayer blackPlayer, Move move, GameEngine game)
+        {
+            if (!move.IsJump) return;
+
+            // Track captures
+            currentPlayer.Stats.PiecesCaptured += move.JumpedPositions.Count;
+
+            // Track king captures
+            foreach (var jumpedPos in move.JumpedPositions)
+            {
+                Piece captured = game.Board.GetPiece(jumpedPos);
+                if (captured?.Type == PieceType.King)
+                {
+                    currentPlayer.Stats.KingsCaptured++;
+
+                    // Opponent lost a king
+                    AIPlayer opponent = currentPlayer == redPlayer ? blackPlayer : redPlayer;
+                    opponent.Stats.KingsLost++;
+                }
+            }
+
+            // Track king promotions
+            Piece movingPiece = game.Board.GetPiece(move.From);
+            if (movingPiece != null && movingPiece.Type != PieceType.King)
+            {
+                PieceColor color = game.State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
+                int kingRow = color == PieceColor.Red ? 0 : 7;
+
+                if (move.To.Row == kingRow)
+                {
+                    currentPlayer.Stats.KingsMade++;
+                }
+            }
+        }
+
+        private bool IsDrawByRepetition(Board board, Dictionary<string, int> stateHistory)
+        {
+            string boardState = board.GetStateString();
+            if (!stateHistory.ContainsKey(boardState))
+                stateHistory[boardState] = 0;
+            stateHistory[boardState]++;
+
+            return stateHistory[boardState] >= 3;
+        }
+
+        private void RecordDraw(AIPlayer red, AIPlayer black, Board board)
+        {
+            int redPieces = board.GetAllPieces(PieceColor.Red).Count;
+            int blackPieces = board.GetAllPieces(PieceColor.Black).Count;
+
+            red.UpdateGameResult(GameResult.Draw, redPieces, blackPieces);
+            black.UpdateGameResult(GameResult.Draw, blackPieces, redPieces);
+        }
+
+        private void RecordGameResult(GameEngine game, AIPlayer red, AIPlayer black)
+        {
+            int redPieces = game.Board.GetAllPieces(PieceColor.Red).Count;
+            int blackPieces = game.Board.GetAllPieces(PieceColor.Black).Count;
+
+            if (game.State == GameState.RedWins)
+            {
+                red.UpdateGameResult(GameResult.Win, redPieces, blackPieces);
+                black.UpdateGameResult(GameResult.Loss, blackPieces, redPieces);
+            }
+            else if (game.State == GameState.BlackWins)
+            {
+                black.UpdateGameResult(GameResult.Win, blackPieces, redPieces);
+                red.UpdateGameResult(GameResult.Loss, redPieces, blackPieces);
+            }
+            else
+            {
+                RecordDraw(red, black, game.Board);
+            }
+        }
+
+        private List<Move> GetAllValidMoves(GameEngine game, PieceColor color)
+        {
+            List<Move> allMoves = new List<Move>();
+            MoveValidator validator = new MoveValidator(game.Board);
+
+            foreach (Piece piece in game.Board.GetAllPieces(color))
+            {
+                allMoves.AddRange(validator.GetValidMoves(piece));
+            }
+
+            return allMoves;
+        }
+
+        #endregion
+
+        #region Evolution
+
+        private void EvolvePopulation()
+        {
+            var sortedPop = Population.OrderByDescending(p => p.Brain.Fitness).ToList();
+            List<AIPlayer> newGeneration = new List<AIPlayer>(populationSize);
+
+            // Elitism: keep best performers
+            int eliteCount = Math.Max(2, (int)(populationSize * elitePercentage));
+            for (int i = 0; i < eliteCount; i++)
+            {
+                newGeneration.Add(sortedPop[i].Clone());
+            }
+
+            // Breeding: create offspring
+            while (newGeneration.Count < populationSize)
+            {
+                AIPlayer parent1 = TournamentSelect(sortedPop);
+                AIPlayer parent2 = TournamentSelect(sortedPop);
+                AIPlayer child = Breed(parent1, parent2);
+                newGeneration.Add(child);
+            }
+
+            Population = newGeneration;
+        }
+
+        private AIPlayer Breed(AIPlayer parent1, AIPlayer parent2)
+        {
+            AIPlayer child = parent1.Crossover(parent2, random);
+            double adaptiveMutation = CalculateAdaptiveMutationRate(parent1, parent2);
+            child.Mutate(adaptiveMutation);
+            return child;
+        }
+
+        private double CalculateAdaptiveMutationRate(AIPlayer parent1, AIPlayer parent2)
+        {
+            double rate = mutationRate;
+
+            // Increase for weak parents (exploration)
+            double avgParentFitness = (parent1.Brain.Fitness + parent2.Brain.Fitness) / 2.0;
+            double bestFitness = BestPlayer?.Brain.Fitness ?? 1.0;
+
+            if (bestFitness > 0)
+            {
+                double weakness = 1.0 - (avgParentFitness / bestFitness);
+                rate += weakness * 0.15;
+            }
+
+            // Increase if stagnating
+            if (generationsWithoutImprovement > 5)
+            {
+                rate += 0.05 * (generationsWithoutImprovement / 5.0);
+            }
+
+            return Math.Min(rate, 0.5); // Cap at 50%
+        }
+
+        private AIPlayer TournamentSelect(List<AIPlayer> sortedPopulation)
+        {
+            const int tournamentSize = 5;
+            int size = Math.Min(tournamentSize, sortedPopulation.Count);
+
+            AIPlayer best = sortedPopulation[random.Next(sortedPopulation.Count)];
+            for (int i = 1; i < size; i++)
+            {
+                AIPlayer contestant = sortedPopulation[random.Next(sortedPopulation.Count)];
+                if (contestant.Brain.Fitness > best.Brain.Fitness)
+                    best = contestant;
+            }
+
+            return best;
+        }
+
+        #endregion
+
+        #region Diversity Management
+
+        private void InjectDiversity()
+        {
+            var sortedPop = Population.OrderBy(p => p.Brain.Fitness).ToList();
+            int replaceCount = (int)(populationSize * 0.2);
+
+            // Replace weakest 20% with new random players
+            for (int i = 0; i < replaceCount; i++)
+            {
+                sortedPop[i] = new AIPlayer(random);
+            }
+
+            // Heavily mutate middle 20%
+            int mutateStart = replaceCount;
+            int mutateEnd = mutateStart + replaceCount;
+
+            for (int i = mutateStart; i < mutateEnd && i < sortedPop.Count; i++)
+            {
+                sortedPop[i].Mutate(0.3);
+            }
+        }
+
+        #endregion
+
+        #region Reporting
+
         public string GetGenerationReport()
         {
-            string stagnationWarning = generationsWithoutImprovement > 10
+            string warning = generationsWithoutImprovement > 10
                 ? $" ⚠ Stagnation: {generationsWithoutImprovement} gen"
                 : "";
 
             return $"Generation {CurrentStats.Generation} | " +
-                   $"Best Fitness: {CurrentStats.BestFitness:F2} | " +
-                   $"Avg Fitness: {CurrentStats.AverageFitness:F2} | " +
-                   $"Best Win Rate: {CurrentStats.BestWinRate:P1} | " +
-                   $"Avg Win Rate: {CurrentStats.AverageWinRate:P1}" +
-                   stagnationWarning;
+                   $"Best: {CurrentStats.BestFitness:F2} | " +
+                   $"Avg: {CurrentStats.AverageFitness:F2} | " +
+                   $"Win Rate: {CurrentStats.BestWinRate:P1} ({CurrentStats.AverageWinRate:P1} avg)" +
+                   warning;
         }
+
+        #endregion
     }
+
+    #region Configuration & Stats
 
     public class TrainingConfig
     {
@@ -406,4 +478,6 @@ namespace checkersclaude
         public double AverageWinRate { get; set; }
         public int BestGamesPlayed { get; set; }
     }
+
+    #endregion
 }

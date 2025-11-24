@@ -224,11 +224,7 @@ namespace checkersclaude
                 undoButton.Enabled = false;
 
                 // Clear AI cache if in AI mode
-                if (mode == GameMode.HumanVsAI && aiPlayer != null)
-                {
-                    aiPlayer.ClearCache();
-                }
-
+                
                 moveHistoryLabel.Text = "Move #0 - Game Start";
                 UpdateBoard();
             }
@@ -386,10 +382,7 @@ namespace checkersclaude
                 undoButton.Enabled = false;
 
                 // Clear AI cache if in AI mode
-                if (mode == GameMode.HumanVsAI && aiPlayer != null)
-                {
-                    aiPlayer.ClearCache();
-                }
+             
 
                 moveHistoryLabel.Text = "Move #0 - Game Start";
                 UpdateBoard();
