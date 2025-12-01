@@ -1,36 +1,34 @@
-﻿
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using checkersclaude.AI;
 
 namespace checkersclaude
 {
+    /// <summary>
+    /// רמות קושי למשחק
+    /// </summary>
+    public enum DifficultyLevel
+    {
+        Easy,    // רק רשת נוירונים בסיסית
+        Medium,  // רשת + בונוסים אסטרטגיים
+        Hard,    // רשת + בונוסים + חיפוש עומק 1
+        Expert   // רשת + בונוסים + חיפוש עומק 2
+    }
+
     public class AIPlayer
     {
-        #region Properties and Constants
-
         public DeepNeuralNetwork Brain { get; private set; }
         public PlayerStats Stats { get; private set; }
+        public DifficultyLevel Difficulty { get; set; } = DifficultyLevel.Hard;
 
         private const int InputSize = 64;
         private static readonly int[] HiddenSizes = { 128, 64, 32 };
         private const int OutputSize = 1;
 
-        // Pre-calculated constants for performance
-        private const double CenterWeight = 0.4;
-        private const double AdvancementWeight = 0.3;
-        private const double PromotionWeight = 0.5;
-        private const double DiagonalWeight = 0.2;
-        private const double EdgePenalty = 0.15;
-        private const double BackRowBonus = 0.2;
-        private const double MobilityBonus = 0.2;
-        private const double ProtectionBonus = 0.3;
-
-        #endregion
-
-        #region Constructors
+        // Cache להערכות מהלכים - שיפור ביצועים משמעותי
+        private Dictionary<string, double> evaluationCache = new Dictionary<string, double>();
+        private const int MaxCacheSize = 10000;
 
         public AIPlayer(Random random = null)
         {
@@ -44,15 +42,65 @@ namespace checkersclaude
             Stats = new PlayerStats();
         }
 
-        #endregion
-
-        #region Move Selection
-
+        /// <summary>
+        /// בחירת מהלך מתוך רשימת מהלכים תקפים בהתאם לרמת הקושי
+        /// </summary>
         public Move ChooseMove(Board board, List<Move> validMoves, PieceColor color)
         {
-            if (validMoves == null || validMoves.Count == 0) return null;
-            if (validMoves.Count == 1) return validMoves[0];
+            if (validMoves == null || validMoves.Count == 0)
+                return null;
 
+            if (validMoves.Count == 1)
+                return validMoves[0];
+
+            switch (Difficulty)
+            {
+                case DifficultyLevel.Easy:
+                    return ChooseMoveBasic(board, validMoves, color);
+
+                case DifficultyLevel.Medium:
+                    return ChooseMoveWithStrategy(board, validMoves, color);
+
+                case DifficultyLevel.Hard:
+                    return ChooseMoveWithDepth1(board, validMoves, color);
+
+                case DifficultyLevel.Expert:
+                    return ChooseMoveWithDepth2(board, validMoves, color);
+
+                default:
+                    return ChooseMoveWithStrategy(board, validMoves, color);
+            }
+        }
+
+        /// <summary>
+        /// מצב Easy - רק רשת נוירונים בסיסית ללא בונוסים
+        /// </summary>
+        private Move ChooseMoveBasic(Board board, List<Move> validMoves, PieceColor color)
+        {
+            double bestScore = double.MinValue;
+            Move bestMove = validMoves[0];
+
+            foreach (Move move in validMoves)
+            {
+                double[] boardState = GetBoardStateAfterMove(board, move, color);
+                double[] output = Brain.FeedForward(boardState);
+
+                if (output[0] > bestScore)
+                {
+                    bestScore = output[0];
+                    bestMove = move;
+                }
+            }
+
+            Stats.TotalMoves++;
+            return bestMove;
+        }
+
+        /// <summary>
+        /// מצב Medium/Hard - רשת נוירונים עם בונוסים אסטרטגיים
+        /// </summary>
+        private Move ChooseMoveWithStrategy(Board board, List<Move> validMoves, PieceColor color)
+        {
             double bestScore = double.MinValue;
             Move bestMove = validMoves[0];
 
@@ -70,26 +118,162 @@ namespace checkersclaude
             return bestMove;
         }
 
-        private double EvaluateMove(Board board, Move move, PieceColor color)
+        /// <summary>
+        /// מצב Hard - חיפוש עומק 1 (מסתכל גם על תגובת היריב)
+        /// </summary>
+        private Move ChooseMoveWithDepth1(Board board, List<Move> validMoves, PieceColor color)
         {
-            // Get neural network evaluation
-            double[] boardState = GetBoardStateAfterMove(board, move, color);
-            double neuralScore = Brain.FeedForward(boardState)[0];
+            double bestScore = double.MinValue;
+            Move bestMove = validMoves[0];
+            PieceColor opponentColor = color == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
 
-            // Get strategic and tactical bonuses
-            double strategicScore = EvaluateStrategy(board, move, color);
-            double tacticalScore = EvaluateTactics(board, move, color);
+            foreach (Move move in validMoves)
+            {
+                Board simBoard = SimulateMove(board, move);
+                double myScore = EvaluateMoveSimple(board, move, color);
 
-            return neuralScore + strategicScore * 0.15 + tacticalScore * 0.1;
+                // הערכת תגובה טובה ביותר של היריב
+                var opponentMoves = GetAllValidMoves(simBoard, opponentColor);
+
+                double worstOpponentScore = double.MaxValue;
+                if (opponentMoves.Count > 0)
+                {
+                    foreach (var oppMove in opponentMoves)
+                    {
+                        double oppScore = EvaluateMoveSimple(simBoard, oppMove, opponentColor);
+                        if (oppScore < worstOpponentScore)
+                            worstOpponentScore = oppScore;
+                    }
+                }
+                else
+                {
+                    worstOpponentScore = 0;
+                }
+
+                double totalScore = myScore - worstOpponentScore * 0.5;
+
+                if (totalScore > bestScore)
+                {
+                    bestScore = totalScore;
+                    bestMove = move;
+                }
+            }
+
+            Stats.TotalMoves++;
+            return bestMove;
         }
 
-        #endregion
+        /// <summary>
+        /// מצב Expert - חיפוש עומק 2
+        /// </summary>
+        private Move ChooseMoveWithDepth2(Board board, List<Move> validMoves, PieceColor color)
+        {
+            double bestScore = double.MinValue;
+            Move bestMove = validMoves[0];
+            PieceColor opponentColor = color == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
 
-        #region Board State Evaluation
+            foreach (Move move in validMoves)
+            {
+                Board simBoard1 = SimulateMove(board, move);
+                double myScore = EvaluateMoveSimple(board, move, color);
 
+                var opponentMoves = GetAllValidMoves(simBoard1, opponentColor);
+                double bestOpponentScore = double.MinValue;
+
+                foreach (var oppMove in opponentMoves.Take(5)) // מגביל ל-5 מהלכים טובים של היריב
+                {
+                    Board simBoard2 = SimulateMove(simBoard1, oppMove);
+                    double oppScore = EvaluateMoveSimple(simBoard1, oppMove, opponentColor);
+
+                    // התגובה שלנו למהלך של היריב
+                    var myResponseMoves = GetAllValidMoves(simBoard2, color);
+                    double bestResponseScore = double.MinValue;
+
+                    foreach (var respMove in myResponseMoves.Take(3))
+                    {
+                        double respScore = EvaluateMoveSimple(simBoard2, respMove, color);
+                        if (respScore > bestResponseScore)
+                            bestResponseScore = respScore;
+                    }
+
+                    double netOpponentScore = oppScore - bestResponseScore * 0.5;
+                    if (netOpponentScore > bestOpponentScore)
+                        bestOpponentScore = netOpponentScore;
+                }
+
+                double totalScore = myScore - bestOpponentScore * 0.7;
+
+                if (totalScore > bestScore)
+                {
+                    bestScore = totalScore;
+                    bestMove = move;
+                }
+            }
+
+            Stats.TotalMoves++;
+            return bestMove;
+        }
+
+        /// <summary>
+        /// הערכת מהלך עם cache לשיפור ביצועים
+        /// </summary>
+        public double EvaluateMove(Board board, Move move, PieceColor color)
+        {
+            string boardKey = board.GetStateString() + move.ToString() + color.ToString();
+
+            if (evaluationCache.TryGetValue(boardKey, out double cachedValue))
+                return cachedValue;
+
+            double[] boardState = GetBoardStateAfterMove(board, move, color);
+            double[] output = Brain.FeedForward(boardState);
+
+            double strategicBonus = CalculateStrategicValue(board, move, color);
+
+            double result = output[0] + strategicBonus * 0.1;
+
+            // ניהול גודל cache
+            if (evaluationCache.Count >= MaxCacheSize)
+                evaluationCache.Clear();
+
+            evaluationCache[boardKey] = result;
+            return result;
+        }
+
+        /// <summary>
+        /// הערכה פשוטה ללא cache (לחיפוש עומק)
+        /// </summary>
+        private double EvaluateMoveSimple(Board board, Move move, PieceColor color)
+        {
+            double[] boardState = GetBoardStateAfterMove(board, move, color);
+            double[] output = Brain.FeedForward(boardState);
+            double strategicBonus = CalculateStrategicValue(board, move, color);
+            return output[0] + strategicBonus * 0.1;
+        }
+
+        /// <summary>
+        /// מחזיר את כל המהלכים התקפים עבור צבע מסוים
+        /// </summary>
+        private List<Move> GetAllValidMoves(Board board, PieceColor color)
+        {
+            var allMoves = new List<Move>();
+            var pieces = board.GetAllPieces(color);
+            var validator = new MoveValidator(board);
+
+            foreach (var piece in pieces)
+            {
+                allMoves.AddRange(validator.GetValidMoves(piece));
+            }
+
+            return allMoves;
+        }
+
+        /// <summary>
+        /// יוצר ייצוג של הלוח אחרי ביצוע מהלך
+        /// </summary>
         private double[] GetBoardStateAfterMove(Board board, Move move, PieceColor color)
         {
             double[] state = new double[InputSize];
+
             Board simBoard = SimulateMove(board, move);
 
             int index = 0;
@@ -102,401 +286,232 @@ namespace checkersclaude
 
                     if (piece == null)
                     {
-                        state[index++] = 0.0;
+                        state[index] = 0.0;
+                    }
+                    else if (piece.Color == color)
+                    {
+                        state[index] = piece.Type == PieceType.King ? 3.0 : 1.0;
+
+                        double positionValue = GetPositionValue(pos, color);
+                        state[index] += positionValue * 0.5;
                     }
                     else
                     {
-                        bool isOurs = piece.Color == color;
-                        double value = EvaluatePieceValue(piece, pos, simBoard, isOurs ? color : piece.Color);
-                        state[index++] = isOurs ? value : -value;
+                        state[index] = piece.Type == PieceType.King ? -3.0 : -1.0;
+
+                        double positionValue = GetPositionValue(pos, piece.Color);
+                        state[index] -= positionValue * 0.5;
                     }
+
+                    index++;
                 }
             }
 
             return state;
         }
 
-        private double EvaluatePieceValue(Piece piece, Position pos, Board board, PieceColor color)
-        {
-            // Base value
-            double value = piece.Type == PieceType.King ? 3.0 : 1.0;
-
-            // Positional value
-            value += GetPositionValue(pos, piece, color);
-
-            // Mobility bonus
-            if (HasValidMoves(board, piece))
-                value += MobilityBonus;
-
-            // Protection bonus
-            if (IsProtected(board, pos, color))
-                value += ProtectionBonus;
-
-            return value;
-        }
-
-        #endregion
-
-        #region Position Evaluation (Cleaner & Optimized)
-
-        private double GetPositionValue(Position pos, Piece piece, PieceColor color)
-        {
-            double value = 0.0;
-
-            // Center control (smooth gradient from edges to center)
-            value += GetCenterControlValue(pos) * CenterWeight;
-
-            // Forward advancement
-            value += GetAdvancementValue(pos, piece, color) * AdvancementWeight;
-
-            // Promotion proximity (exponential for urgency)
-            if (piece.Type != PieceType.King)
-                value += GetPromotionProximity(pos, color) * PromotionWeight;
-
-            // Edge penalty (pieces on edges are vulnerable)
-            if (pos.Col == 0 || pos.Col == 7)
-                value -= EdgePenalty;
-
-            // Back row defense
-            if (IsBackRow(pos, color))
-                value += BackRowBonus;
-
-            // Diagonal control
-            value += GetDiagonalValue(pos) * DiagonalWeight;
-
-            return value;
-        }
-
-        // Center control: 1.0 at center, 0.0 at corners
-        private double GetCenterControlValue(Position pos)
-        {
-            double distFromCenter = Math.Sqrt(Math.Pow(pos.Row - 3.5, 2) + Math.Pow(pos.Col - 3.5, 2));
-            return Math.Max(0, 1.0 - distFromCenter / 5.0);
-        }
-
-        // Advancement: how far the piece has progressed
-        private double GetAdvancementValue(Position pos, Piece piece, PieceColor color)
-        {
-            if (piece.Type == PieceType.King) return 0.0;
-            return color == PieceColor.Red ? (7 - pos.Row) / 7.0 : pos.Row / 7.0;
-        }
-
-        // Promotion proximity: exponential (urgent near king row)
-        private double GetPromotionProximity(Position pos, PieceColor color)
-        {
-            int rowsToKing = color == PieceColor.Red ? pos.Row : 7 - pos.Row;
-            double progress = (7.0 - rowsToKing) / 7.0;
-            return progress * progress; // Exponential
-        }
-
-        // Diagonal control: main diagonals are strategic
-        private double GetDiagonalValue(Position pos)
-        {
-            double value = 0.0;
-            if (pos.Row == pos.Col) value += 0.3;
-            if (pos.Row + pos.Col == 7) value += 0.3;
-            return value;
-        }
-
-        // Check if position is back row
-        private bool IsBackRow(Position pos, PieceColor color)
-        {
-            return (color == PieceColor.Red && pos.Row == 7) ||
-                   (color == PieceColor.Black && pos.Row == 0);
-        }
-
-        #endregion
-
-        #region Strategic Evaluation
-
-        private double EvaluateStrategy(Board board, Move move, PieceColor color)
-        {
-            double value = 0.0;
-
-            // 1. Capture value (most important)
-            value += EvaluateCaptureValue(board, move);
-
-            // 2. Promotion value
-            value += EvaluatePromotionValue(board, move, color);
-
-            // 3. Material balance
-            Board afterMove = SimulateMove(board, move);
-            value += GetMaterialBalance(afterMove, color) * 0.5;
-
-            // 4. Mobility advantage
-            value += GetMobilityAdvantage(afterMove, color) * 0.3;
-
-            // 5. King safety
-            value += EvaluateKingSafety(board, move, color);
-
-            // 6. Tempo (forcing moves)
-            if (move.IsJump) value += 0.5;
-
-            // 7. Endgame bonus
-            value += EvaluateEndgame(board, move, color);
-
-            return value;
-        }
-
-        private double EvaluateCaptureValue(Board board, Move move)
-        {
-            if (!move.IsJump) return 0.0;
-
-            double value = 0.0;
-            foreach (Position jumpedPos in move.JumpedPositions)
-            {
-                Piece captured = board.GetPiece(jumpedPos);
-                if (captured != null)
-                    value += captured.Type == PieceType.King ? 5.0 : 2.0;
-            }
-
-            // Multi-jump bonus
-            if (move.JumpedPositions.Count > 1)
-                value += move.JumpedPositions.Count * 1.5;
-
-            return value;
-        }
-
-        private double EvaluatePromotionValue(Board board, Move move, PieceColor color)
-        {
-            Piece piece = board.GetPiece(move.From);
-            if (piece == null || piece.Type == PieceType.King) return 0.0;
-
-            bool promotes = (color == PieceColor.Red && move.To.Row == 0) ||
-                           (color == PieceColor.Black && move.To.Row == 7);
-
-            return promotes ? 3.0 : 0.0;
-        }
-
-        private double EvaluateKingSafety(Board board, Move move, PieceColor color)
-        {
-            Piece piece = board.GetPiece(move.From);
-            if (piece?.Type != PieceType.King) return 0.0;
-
-            Board afterMove = SimulateMove(board, move);
-            return IsPositionThreatened(afterMove, move.To, color) ? -0.8 : 0.0;
-        }
-
-        private double EvaluateEndgame(Board board, Move move, PieceColor color)
-        {
-            PieceColor opponent = color == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
-            int totalPieces = board.GetAllPieces(color).Count + board.GetAllPieces(opponent).Count;
-
-            // In endgame, centralization matters more
-            return totalPieces <= 6 ? GetCenterControlValue(move.To) * 0.8 : 0.0;
-        }
-
-        #endregion
-
-        #region Tactical Evaluation
-
-        private double EvaluateTactics(Board board, Move move, PieceColor color)
-        {
-            Board afterMove = SimulateMove(board, move);
-            MoveValidator validator = new MoveValidator(afterMove);
-            PieceColor opponent = color == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
-
-            double value = 0.0;
-
-            // Count threats we create
-            foreach (var piece in afterMove.GetAllPieces(color))
-            {
-                int threats = validator.GetValidJumps(piece).Count;
-                value += threats * 0.5;
-            }
-
-            // Count threats against us
-            foreach (var piece in afterMove.GetAllPieces(opponent))
-            {
-                int threats = validator.GetValidJumps(piece).Count;
-                value -= threats * 0.3;
-            }
-
-            return value;
-        }
-
-        #endregion
-
-        #region Material & Mobility
-
-        private double GetMaterialBalance(Board board, PieceColor color)
-        {
-            PieceColor opponent = color == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
-
-            double ourMaterial = CalculateMaterial(board, color);
-            double theirMaterial = CalculateMaterial(board, opponent);
-
-            return ourMaterial - theirMaterial;
-        }
-
-        private double CalculateMaterial(Board board, PieceColor color)
-        {
-            double material = 0;
-            foreach (var piece in board.GetAllPieces(color))
-                material += piece.Type == PieceType.King ? 3.0 : 1.0;
-            return material;
-        }
-
-        private double GetMobilityAdvantage(Board board, PieceColor color)
-        {
-            MoveValidator validator = new MoveValidator(board);
-            PieceColor opponent = color == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
-
-            int ourMoves = CountMoves(board, validator, color);
-            int theirMoves = CountMoves(board, validator, opponent);
-
-            return (ourMoves - theirMoves) * 0.1;
-        }
-
-        private int CountMoves(Board board, MoveValidator validator, PieceColor color)
-        {
-            int count = 0;
-            foreach (var piece in board.GetAllPieces(color))
-                count += validator.GetValidMoves(piece).Count;
-            return count;
-        }
-
-        #endregion
-
-        #region Helper Methods
-
-        private bool HasValidMoves(Board board, Piece piece)
-        {
-            MoveValidator validator = new MoveValidator(board);
-            return validator.GetValidMoves(piece).Count > 0;
-        }
-
-        private bool IsProtected(Board board, Position pos, PieceColor color)
-        {
-            // Check all 4 diagonal neighbors
-            int[] offsets = { -1, 1 };
-            foreach (int rowOff in offsets)
-            {
-                foreach (int colOff in offsets)
-                {
-                    Position neighbor = new Position(pos.Row + rowOff, pos.Col + colOff);
-                    if (board.IsValidPosition(neighbor))
-                    {
-                        Piece piece = board.GetPiece(neighbor);
-                        if (piece != null && piece.Color == color)
-                            return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        private bool IsPositionThreatened(Board board, Position pos, PieceColor color)
-        {
-            PieceColor opponent = color == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
-            MoveValidator validator = new MoveValidator(board);
-
-            foreach (var enemyPiece in board.GetAllPieces(opponent))
-            {
-                var jumps = validator.GetValidJumps(enemyPiece);
-                foreach (var jump in jumps)
-                {
-                    if (jump.JumpedPositions.Contains(pos))
-                        return true;
-                }
-            }
-            return false;
-        }
-
+        /// <summary>
+        /// מבצע סימולציה של מהלך על לוח משוכפל
+        /// </summary>
         private Board SimulateMove(Board board, Move move)
         {
             Board simBoard = board.Clone();
-            Piece piece = simBoard.GetPiece(move.From);
 
-            if (piece == null) return simBoard;
-
-            // Remove from original position
-            simBoard.RemovePiece(move.From);
-
-            // Remove jumped pieces
-            if (move.IsJump && move.JumpedPositions != null)
+            Piece movingPiece = simBoard.GetPiece(move.From);
+            if (movingPiece != null)
             {
-                foreach (Position jumped in move.JumpedPositions)
-                    simBoard.RemovePiece(jumped);
-            }
+                simBoard.RemovePiece(move.From);
 
-            // Place at new position
-            simBoard.SetPiece(move.To, piece);
+                if (move.IsJump && move.JumpedPositions != null)
+                {
+                    foreach (Position jumped in move.JumpedPositions)
+                        simBoard.RemovePiece(jumped);
+                }
 
-            // Check for promotion
-            if (piece.Type != PieceType.King)
-            {
-                bool shouldPromote = (piece.Color == PieceColor.Red && move.To.Row == 0) ||
-                                    (piece.Color == PieceColor.Black && move.To.Row == 7);
-                if (shouldPromote)
-                    piece.PromoteToKing();
+                simBoard.SetPiece(move.To, movingPiece);
+
+                if (movingPiece.Type != PieceType.King)
+                {
+                    if ((movingPiece.Color == PieceColor.Red && move.To.Row == 0) ||
+                        (movingPiece.Color == PieceColor.Black && move.To.Row == 7))
+                    {
+                        movingPiece.PromoteToKing();
+                    }
+                }
             }
 
             return simBoard;
         }
 
-        #endregion
+        /// <summary>
+        /// מחשב ערך פוזיציוני - שליטה במרכז והתקדמות
+        /// </summary>
+        private double GetPositionValue(Position pos, PieceColor color)
+        {
+            double centerBonus = 0.0;
+            if (pos.Col >= 2 && pos.Col <= 5)
+                centerBonus = 0.2;
+            if (pos.Row >= 2 && pos.Row <= 5)
+                centerBonus += 0.2;
 
-        #region Game Result & Fitness
+            double advancementValue = 0.0;
+            if (color == PieceColor.Red)
+                advancementValue = (7 - pos.Row) * 0.1;
+            else
+                advancementValue = pos.Row * 0.1;
 
+            return centerBonus + advancementValue;
+        }
+
+        /// <summary>
+        /// חישוב בונוס אסטרטגי משופר - כולל קפיצות, הכתרות, איומים
+        /// </summary>
+        private double CalculateStrategicValue(Board board, Move move, PieceColor color)
+        {
+            double value = 0.0;
+
+            // בונוס לקפיצות
+            if (move.IsJump)
+            {
+                value += move.JumpedPositions.Count * 2.0;
+
+                // קפיצות מרובות
+                if (move.JumpedPositions.Count > 1)
+                    value += move.JumpedPositions.Count * 0.5;
+
+                // בונוס לכיבוש מלכים
+                foreach (var jumpedPos in move.JumpedPositions)
+                {
+                    Piece jumpedPiece = board.GetPiece(jumpedPos);
+                    if (jumpedPiece != null && jumpedPiece.Type == PieceType.King)
+                        value += 2.0;
+                }
+            }
+
+            // הכתרה ודחיפות הכתרה
+            Piece movingPiece = board.GetPiece(move.From);
+            if (movingPiece != null && movingPiece.Type != PieceType.King)
+            {
+                int promotionRow = color == PieceColor.Red ? 0 : 7;
+
+                if (move.To.Row == promotionRow)
+                {
+                    value += 2.0; // הכתרה מיידית
+                }
+                else
+                {
+                    // דחיפות הכתרה - ככל שקרוב יותר, הבונוס גבוה יותר (אקספוננציאלי)
+                    int distanceToPromotion = Math.Abs(move.To.Row - promotionRow);
+                    double baseDistance = color == PieceColor.Red ? move.From.Row : (7 - move.From.Row);
+                    double newDistance = color == PieceColor.Red ? move.To.Row : (7 - move.To.Row);
+
+                    if (newDistance < baseDistance) // התקדמות לכיוון הכתרה
+                    {
+                        value += Math.Pow(2, 7 - distanceToPromotion) * 0.05;
+                    }
+                }
+            }
+
+            // שליטה במרכז
+            if (move.To.Col >= 2 && move.To.Col <= 5 && move.To.Row >= 2 && move.To.Row <= 5)
+                value += 0.3;
+
+            // זיהוי איומים - האם המהלך מסכן אותנו?
+            try
+            {
+                Board simBoard = SimulateMove(board, move);
+                PieceColor opponentColor = color == PieceColor.Red ? PieceColor.Black : PieceColor.Red;
+
+                MoveValidator validator = new MoveValidator(simBoard);
+                var opponentPieces = simBoard.GetAllPieces(opponentColor);
+
+                bool isInDanger = false;
+                foreach (var opponentPiece in opponentPieces)
+                {
+                    var opponentJumps = opponentPiece.Type == PieceType.King ?
+                        validator.GetValidKingJumps(opponentPiece) :
+                        validator.GetValidJumps(opponentPiece);
+
+                    if (opponentJumps.Any(j => j.JumpedPositions.Contains(move.To)))
+                    {
+                        isInDanger = true;
+                        break;
+                    }
+                }
+
+                if (isInDanger)
+                    value -= 1.5; // קנס על מהלך מסוכן
+            }
+            catch
+            {
+                // אם יש שגיאה בבדיקת איומים, התעלם
+            }
+
+            return value;
+        }
+
+        /// <summary>
+        /// עדכון תוצאת משחק - thread safe
+        /// </summary>
         public void UpdateGameResult(GameResult result, int piecesRemaining, int opponentPiecesRemaining)
         {
-            Stats.GamesPlayed++;
-
-            switch (result)
+            lock (Stats)
             {
-                case GameResult.Win:
-                    Stats.Wins++;
-                    Stats.PiecesCaptured += 12 - opponentPiecesRemaining;
-                    break;
-                case GameResult.Loss:
-                    Stats.Losses++;
-                    Stats.PiecesLost += 12 - piecesRemaining;
-                    break;
-                case GameResult.Draw:
-                    Stats.Draws++;
-                    break;
+                Stats.GamesPlayed++;
+
+                switch (result)
+                {
+                    case GameResult.Win:
+                        Stats.Wins++;
+                        Stats.PiecesCaptured += 12 - opponentPiecesRemaining;
+                        break;
+                    case GameResult.Loss:
+                        Stats.Losses++;
+                        Stats.PiecesLost += 12 - piecesRemaining;
+                        break;
+                    case GameResult.Draw:
+                        Stats.Draws++;
+                        break;
+                }
             }
         }
 
+        /// <summary>
+        /// חישוב ציון כושר מקיף
+        /// </summary>
         public void CalculateFitness()
         {
-            double fitness = 0.0;
-
-            // Win/loss record
-            fitness += Stats.Wins * 100.0;
-            fitness -= Stats.Losses * 50.0;
-            fitness += Stats.Draws * 25.0;
-
-            // Capture efficiency
-            if (Stats.TotalMoves > 0)
+            lock (Stats)
             {
-                double captureRatio = (double)Stats.PiecesCaptured / Stats.TotalMoves;
+                double fitness = 0.0;
+
+                fitness += Stats.Wins * 100.0;
+                fitness -= Stats.Losses * 50.0;
+                fitness += Stats.Draws * 25.0;
+
+                double captureRatio = Stats.TotalMoves > 0
+                    ? (double)Stats.PiecesCaptured / Stats.TotalMoves
+                    : 0.0;
                 fitness += captureRatio * 50.0;
-            }
 
-            // Survival rate
-            if (Stats.GamesPlayed > 0)
-            {
-                double survivalRate = 1.0 - ((double)Stats.PiecesLost / (Stats.GamesPlayed * 12));
+                double survivalRate = Stats.GamesPlayed > 0
+                    ? 1.0 - ((double)Stats.PiecesLost / (Stats.GamesPlayed * 12))
+                    : 0.0;
                 fitness += survivalRate * 30.0;
+
+                fitness += Stats.KingsMade * 15.0;
+                fitness += Stats.KingsCaptured * 20.0;
+                fitness -= Stats.KingsLost * 25.0;
+
+                Brain.Fitness = Math.Max(0, fitness);
             }
-
-            // King management
-            fitness += Stats.KingsMade * 15.0;
-            fitness += Stats.KingsCaptured * 20.0;
-            fitness -= Stats.KingsLost * 25.0;
-
-            Brain.Fitness = Math.Max(0, fitness);
         }
-
-        #endregion
-
-        #region Evolution Methods
 
         public AIPlayer Clone()
         {
-            return new AIPlayer(Brain.Clone());
+            var cloned = new AIPlayer(Brain.Clone());
+            cloned.Difficulty = this.Difficulty;
+            return cloned;
         }
 
         public void Mutate(double mutationRate)
@@ -507,13 +522,19 @@ namespace checkersclaude
         public AIPlayer Crossover(AIPlayer partner, Random random)
         {
             DeepNeuralNetwork childBrain = Brain.Crossover(partner.Brain);
-            return new AIPlayer(childBrain);
+            var child = new AIPlayer(childBrain);
+            child.Difficulty = this.Difficulty;
+            return child;
         }
 
-        #endregion
+        /// <summary>
+        /// ניקוי cache - שימושי בין משחקים
+        /// </summary>
+        public void ClearCache()
+        {
+            evaluationCache.Clear();
+        }
     }
-
-    #region Player Stats
 
     public class PlayerStats
     {
@@ -530,6 +551,4 @@ namespace checkersclaude
 
         public double WinRate => GamesPlayed > 0 ? (double)Wins / GamesPlayed : 0.0;
     }
-
-    #endregion
 }

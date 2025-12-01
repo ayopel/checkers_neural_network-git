@@ -1,20 +1,13 @@
-﻿// ============================================================================
-// FIXED TRAINING SYSTEM - Bug Fixed!
-// ============================================================================
-// Fixed: NullReferenceException in ExecuteMove
-// ============================================================================
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.IO;
 
 namespace checkersclaude
 {
     public class TrainingSystem
     {
-        #region Properties
-
         public List<AIPlayer> Population { get; private set; }
         public int Generation { get; private set; }
         public AIPlayer BestPlayer { get; private set; }
@@ -26,13 +19,9 @@ namespace checkersclaude
         private readonly Random random;
         private readonly TrainingConfig config;
 
-        private double historicalBestFitness = 0;
-        private int generationsWithoutImprovement = 0;
-        private const int DiversityResetThreshold = 20;
-
-        #endregion
-
-        #region Initialization
+        // שמירה אוטומטית
+        private readonly int autoSaveInterval = 10;
+        private readonly string checkpointDir = "checkpoints";
 
         public TrainingSystem(TrainingConfig config)
         {
@@ -44,141 +33,111 @@ namespace checkersclaude
 
             Generation = 0;
             CurrentStats = new TrainingStats();
+
+            // יצירת תיקיית checkpoints
+            if (!Directory.Exists(checkpointDir))
+            {
+                try
+                {
+                    Directory.CreateDirectory(checkpointDir);
+                }
+                catch { }
+            }
+
             InitializePopulation();
         }
 
         private void InitializePopulation()
         {
-            Population = new List<AIPlayer>(populationSize);
+            Population = new List<AIPlayer>();
             for (int i = 0; i < populationSize; i++)
             {
                 Population.Add(new AIPlayer(random));
             }
         }
 
-        #endregion
-
-        #region Main Training Loop
-
         public void RunGeneration()
         {
             Generation++;
 
-            ResetPlayerStats();
-            RunTournament();
-            CalculateAllFitness();
-            UpdateBestPlayer();
-            UpdateGenerationStats();
-            EvolvePopulation();
-            CheckForStagnation();
-        }
-
-        private void ResetPlayerStats()
-        {
+            // איפוס סטטיסטיקות
             foreach (var player in Population)
             {
-                player.Stats.GamesPlayed = 0;
-                player.Stats.Wins = 0;
-                player.Stats.Losses = 0;
-                player.Stats.Draws = 0;
+                lock (player.Stats)
+                {
+                    player.Stats.GamesPlayed = 0;
+                    player.Stats.Wins = 0;
+                    player.Stats.Losses = 0;
+                    player.Stats.Draws = 0;
+                }
             }
-        }
 
-        private void CalculateAllFitness()
-        {
+            RunTournament();
+
             foreach (var player in Population)
             {
                 player.CalculateFitness();
             }
-        }
 
-        private void UpdateBestPlayer()
-        {
             BestPlayer = Population.OrderByDescending(p => p.Brain.Fitness).First();
 
-            if (BestPlayer.Brain.Fitness > historicalBestFitness)
-            {
-                historicalBestFitness = BestPlayer.Brain.Fitness;
-                generationsWithoutImprovement = 0;
-            }
-            else
-            {
-                generationsWithoutImprovement++;
-            }
-        }
+            UpdateStats();
 
-        private void UpdateGenerationStats()
-        {
-            CurrentStats.Generation = Generation;
-            CurrentStats.BestFitness = BestPlayer.Brain.Fitness;
-            CurrentStats.AverageFitness = Population.Average(p => p.Brain.Fitness);
-            CurrentStats.BestWinRate = BestPlayer.Stats.WinRate;
-            CurrentStats.AverageWinRate = Population.Average(p => p.Stats.WinRate);
-            CurrentStats.BestGamesPlayed = BestPlayer.Stats.GamesPlayed;
-        }
+            EvolvePopulation();
 
-        private void CheckForStagnation()
-        {
-            if (generationsWithoutImprovement >= DiversityResetThreshold)
+            // שמירה אוטומטית
+            if (Generation % autoSaveInterval == 0)
             {
-                InjectDiversity();
-                generationsWithoutImprovement = 0;
+                SaveCheckpoint();
             }
         }
-
-        #endregion
-
-        #region Tournament
 
         private void RunTournament()
         {
+            int gamesPerPair = config.GamesPerPair;
+
             var matchups = GenerateMatchups();
 
             if (config.UseParallelProcessing)
             {
-                Parallel.ForEach(matchups, matchup => PlayMatchup(matchup));
+                Parallel.ForEach(matchups, matchup =>
+                {
+                    for (int game = 0; game < gamesPerPair; game++)
+                    {
+                        AIPlayer red = game % 2 == 0 ? matchup.Item1 : matchup.Item2;
+                        AIPlayer black = game % 2 == 0 ? matchup.Item2 : matchup.Item1;
+                        PlayGame(red, black);
+                    }
+                });
             }
             else
             {
                 foreach (var matchup in matchups)
                 {
-                    PlayMatchup(matchup);
+                    for (int game = 0; game < gamesPerPair; game++)
+                    {
+                        AIPlayer red = game % 2 == 0 ? matchup.Item1 : matchup.Item2;
+                        AIPlayer black = game % 2 == 0 ? matchup.Item2 : matchup.Item1;
+                        PlayGame(red, black);
+                    }
                 }
-            }
-        }
-
-        private void PlayMatchup(Tuple<AIPlayer, AIPlayer> matchup)
-        {
-            for (int game = 0; game < config.GamesPerPair; game++)
-            {
-                // Alternate colors for fairness
-                bool redFirst = game % 2 == 0;
-                AIPlayer red = redFirst ? matchup.Item1 : matchup.Item2;
-                AIPlayer black = redFirst ? matchup.Item2 : matchup.Item1;
-
-                PlayGame(red, black);
             }
         }
 
         private List<Tuple<AIPlayer, AIPlayer>> GenerateMatchups()
         {
             var matchups = new List<Tuple<AIPlayer, AIPlayer>>();
-            var sortedPop = Generation > 1
-                ? Population.OrderByDescending(p => p.Brain.Fitness).ToList()
-                : Population.ToList();
 
             for (int i = 0; i < Population.Count; i++)
             {
-                int numOpponents = Math.Min(config.OpponentsPerPlayer, Population.Count - 1);
+                int opponents = Math.Min(config.OpponentsPerPlayer, Population.Count - 1);
 
-                for (int j = 0; j < numOpponents; j++)
+                for (int j = 0; j < opponents; j++)
                 {
-                    int opponentIdx = SelectOpponent(i, sortedPop.Count);
-                    if (opponentIdx != i)
+                    int opponentIndex = (i + j + 1) % Population.Count;
+                    if (opponentIndex != i)
                     {
-                        matchups.Add(new Tuple<AIPlayer, AIPlayer>(
-                            Population[i],
-                            sortedPop[opponentIdx]));
+                        matchups.Add(new Tuple<AIPlayer, AIPlayer>(Population[i], Population[opponentIndex]));
                     }
                 }
             }
@@ -186,221 +145,187 @@ namespace checkersclaude
             return matchups;
         }
 
-        private int SelectOpponent(int playerIndex, int populationCount)
-        {
-            // 60% similar skill, 40% random (better learning)
-            if (Generation > 1 && random.NextDouble() < 0.6)
-            {
-                // Similar skill opponent (within ±3 ranks)
-                int minRank = Math.Max(0, playerIndex - 3);
-                int maxRank = Math.Min(populationCount - 1, playerIndex + 3);
-                return random.Next(minRank, maxRank + 1);
-            }
-            else
-            {
-                // Random opponent for diversity
-                return random.Next(populationCount);
-            }
-        }
-
-        #endregion
-
-        #region Game Simulation
-
         private void PlayGame(AIPlayer redPlayer, AIPlayer blackPlayer)
         {
             GameEngine game = new GameEngine();
-            Dictionary<string, int> stateHistory = new Dictionary<string, int>();
             int moveCount = 0;
+            int maxMoves = config.MaxMovesPerGame;
 
-            while (!game.IsGameOver() && moveCount < config.MaxMovesPerGame)
+            Dictionary<string, int> stateHistory = new Dictionary<string, int>();
+
+            while (game.State != GameState.RedWins &&
+                   game.State != GameState.BlackWins &&
+                   moveCount < maxMoves)
             {
                 AIPlayer currentPlayer = game.State == GameState.RedTurn ? redPlayer : blackPlayer;
                 PieceColor currentColor = game.State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
 
-                Move move = SelectMove(game, currentPlayer, currentColor);
-                if (move == null) break;
+                List<Move> validMoves = GetAllValidMoves(game, currentColor);
 
-                // Track stats and execute move
-                TrackMoveStats(currentPlayer, redPlayer, blackPlayer, move, game);
+                if (validMoves.Count == 0)
+                    break;
 
-                game.SelectPiece(move.From);
-                game.MovePiece(move.To);
+                Move chosenMove = currentPlayer.ChooseMove(game.Board, validMoves, currentColor);
 
-                // Check for draw by repetition
-                if (IsDrawByRepetition(game.Board, stateHistory))
+                if (chosenMove == null)
+                    break;
+
+                // Thread-safe update של סטטיסטיקות
+                if (chosenMove.IsJump)
                 {
-                    RecordDraw(redPlayer, blackPlayer, game.Board);
+                    lock (currentPlayer.Stats)
+                    {
+                        currentPlayer.Stats.PiecesCaptured += chosenMove.JumpedPositions.Count;
+                    }
+                }
+
+                game.SelectPiece(chosenMove.From);
+                game.MovePiece(chosenMove.To);
+
+                Piece movedPiece = game.Board.GetPiece(chosenMove.To);
+                if (movedPiece != null && movedPiece.Type == PieceType.King)
+                {
+                    lock (currentPlayer.Stats)
+                    {
+                        currentPlayer.Stats.KingsMade++;
+                    }
+                }
+
+                string boardState = game.Board.GetStateString();
+                if (!stateHistory.ContainsKey(boardState))
+                    stateHistory[boardState] = 0;
+                stateHistory[boardState]++;
+
+                if (stateHistory[boardState] >= 3)
+                {
+                    UpdateGameResultThreadSafe(redPlayer, GameResult.Draw,
+                        game.Board.GetAllPieces(PieceColor.Red).Count,
+                        game.Board.GetAllPieces(PieceColor.Black).Count);
+                    UpdateGameResultThreadSafe(blackPlayer, GameResult.Draw,
+                        game.Board.GetAllPieces(PieceColor.Black).Count,
+                        game.Board.GetAllPieces(PieceColor.Red).Count);
                     return;
                 }
 
                 moveCount++;
             }
 
-            RecordGameResult(game, redPlayer, blackPlayer);
-        }
-
-        private Move SelectMove(GameEngine game, AIPlayer player, PieceColor color)
-        {
-            List<Move> validMoves = GetAllValidMoves(game, color);
-            if (validMoves.Count == 0) return null;
-            return player.ChooseMove(game.Board, validMoves, color);
-        }
-
-        private void TrackMoveStats(AIPlayer currentPlayer, AIPlayer redPlayer, AIPlayer blackPlayer, Move move, GameEngine game)
-        {
-            if (!move.IsJump) return;
-
-            // Track captures
-            currentPlayer.Stats.PiecesCaptured += move.JumpedPositions.Count;
-
-            // Track king captures
-            foreach (var jumpedPos in move.JumpedPositions)
-            {
-                Piece captured = game.Board.GetPiece(jumpedPos);
-                if (captured?.Type == PieceType.King)
-                {
-                    currentPlayer.Stats.KingsCaptured++;
-
-                    // Opponent lost a king
-                    AIPlayer opponent = currentPlayer == redPlayer ? blackPlayer : redPlayer;
-                    opponent.Stats.KingsLost++;
-                }
-            }
-
-            // Track king promotions
-            Piece movingPiece = game.Board.GetPiece(move.From);
-            if (movingPiece != null && movingPiece.Type != PieceType.King)
-            {
-                PieceColor color = game.State == GameState.RedTurn ? PieceColor.Red : PieceColor.Black;
-                int kingRow = color == PieceColor.Red ? 0 : 7;
-
-                if (move.To.Row == kingRow)
-                {
-                    currentPlayer.Stats.KingsMade++;
-                }
-            }
-        }
-
-        private bool IsDrawByRepetition(Board board, Dictionary<string, int> stateHistory)
-        {
-            string boardState = board.GetStateString();
-            if (!stateHistory.ContainsKey(boardState))
-                stateHistory[boardState] = 0;
-            stateHistory[boardState]++;
-
-            return stateHistory[boardState] >= 3;
-        }
-
-        private void RecordDraw(AIPlayer red, AIPlayer black, Board board)
-        {
-            int redPieces = board.GetAllPieces(PieceColor.Red).Count;
-            int blackPieces = board.GetAllPieces(PieceColor.Black).Count;
-
-            red.UpdateGameResult(GameResult.Draw, redPieces, blackPieces);
-            black.UpdateGameResult(GameResult.Draw, blackPieces, redPieces);
-        }
-
-        private void RecordGameResult(GameEngine game, AIPlayer red, AIPlayer black)
-        {
             int redPieces = game.Board.GetAllPieces(PieceColor.Red).Count;
             int blackPieces = game.Board.GetAllPieces(PieceColor.Black).Count;
 
             if (game.State == GameState.RedWins)
             {
-                red.UpdateGameResult(GameResult.Win, redPieces, blackPieces);
-                black.UpdateGameResult(GameResult.Loss, blackPieces, redPieces);
+                UpdateGameResultThreadSafe(redPlayer, GameResult.Win, redPieces, blackPieces);
+                UpdateGameResultThreadSafe(blackPlayer, GameResult.Loss, blackPieces, redPieces);
             }
             else if (game.State == GameState.BlackWins)
             {
-                black.UpdateGameResult(GameResult.Win, blackPieces, redPieces);
-                red.UpdateGameResult(GameResult.Loss, redPieces, blackPieces);
+                UpdateGameResultThreadSafe(blackPlayer, GameResult.Win, blackPieces, redPieces);
+                UpdateGameResultThreadSafe(redPlayer, GameResult.Loss, redPieces, blackPieces);
             }
             else
             {
-                RecordDraw(red, black, game.Board);
+                UpdateGameResultThreadSafe(redPlayer, GameResult.Draw, redPieces, blackPieces);
+                UpdateGameResultThreadSafe(blackPlayer, GameResult.Draw, blackPieces, redPieces);
             }
+        }
+
+        /// <summary>
+        /// עדכון תוצאות משחק ב-thread safe
+        /// </summary>
+        private void UpdateGameResultThreadSafe(AIPlayer player, GameResult result, int pieces, int opponentPieces)
+        {
+            player.UpdateGameResult(result, pieces, opponentPieces);
         }
 
         private List<Move> GetAllValidMoves(GameEngine game, PieceColor color)
         {
             List<Move> allMoves = new List<Move>();
+            List<Piece> pieces = game.Board.GetAllPieces(color);
             MoveValidator validator = new MoveValidator(game.Board);
 
-            foreach (Piece piece in game.Board.GetAllPieces(color))
+            foreach (Piece piece in pieces)
             {
-                allMoves.AddRange(validator.GetValidMoves(piece));
+                List<Move> pieceMoves = validator.GetValidMoves(piece);
+                allMoves.AddRange(pieceMoves);
             }
 
             return allMoves;
         }
 
-        #endregion
-
-        #region Evolution
-
+        /// <summary>
+        /// אבולוציה של האוכלוסייה עם diversity injection
+        /// </summary>
         private void EvolvePopulation()
         {
-            var sortedPop = Population.OrderByDescending(p => p.Brain.Fitness).ToList();
-            List<AIPlayer> newGeneration = new List<AIPlayer>(populationSize);
+            List<AIPlayer> newGeneration = new List<AIPlayer>();
 
-            // Elitism: keep best performers
-            int eliteCount = Math.Max(2, (int)(populationSize * elitePercentage));
+            var sortedPopulation = Population.OrderByDescending(p => p.Brain.Fitness).ToList();
+
+            // שימור אליטה
+            int eliteCount = Math.Max(1, (int)(populationSize * elitePercentage));
             for (int i = 0; i < eliteCount; i++)
             {
-                newGeneration.Add(sortedPop[i].Clone());
+                newGeneration.Add(sortedPopulation[i].Clone());
             }
 
-            // Breeding: create offspring
-            while (newGeneration.Count < populationSize)
+            // בדיקת גיוון - אם האוכלוסייה דומה מדי, הוסף פרטים חדשים
+            double diversityScore = CalculateDiversity(sortedPopulation);
+            int randomInjections = diversityScore < 100.0 ? Math.Min((int)(populationSize * 0.1), 5) : 0;
+
+            // יצירת צאצאים
+            while (newGeneration.Count < populationSize - randomInjections)
             {
-                AIPlayer parent1 = TournamentSelect(sortedPop);
-                AIPlayer parent2 = TournamentSelect(sortedPop);
-                AIPlayer child = Breed(parent1, parent2);
+                AIPlayer parent1 = SelectParent(sortedPopulation);
+                AIPlayer parent2 = SelectParent(sortedPopulation);
+
+                AIPlayer child = parent1.Crossover(parent2, random);
+
+                // מוטציה אדפטיבית
+                double adaptiveMutationRate = mutationRate * (1.0 + (1.0 - parent1.Brain.Fitness / (BestPlayer.Brain.Fitness + 1.0)));
+                child.Mutate(Math.Min(adaptiveMutationRate, 0.5));
+
                 newGeneration.Add(child);
+            }
+
+            // הזרקת פרטים אקראיים לשיפור גיוון (Diversity Injection)
+            for (int i = 0; i < randomInjections; i++)
+            {
+                newGeneration.Add(new AIPlayer(random));
             }
 
             Population = newGeneration;
         }
 
-        private AIPlayer Breed(AIPlayer parent1, AIPlayer parent2)
+        /// <summary>
+        /// חישוב ציון גיוון של האוכלוסייה
+        /// </summary>
+        private double CalculateDiversity(List<AIPlayer> population)
         {
-            AIPlayer child = parent1.Crossover(parent2, random);
-            double adaptiveMutation = CalculateAdaptiveMutationRate(parent1, parent2);
-            child.Mutate(adaptiveMutation);
-            return child;
-        }
+            if (population.Count < 2) return 1000.0;
 
-        private double CalculateAdaptiveMutationRate(AIPlayer parent1, AIPlayer parent2)
-        {
-            double rate = mutationRate;
+            double totalDifference = 0;
+            int comparisons = 0;
 
-            // Increase for weak parents (exploration)
-            double avgParentFitness = (parent1.Brain.Fitness + parent2.Brain.Fitness) / 2.0;
-            double bestFitness = BestPlayer?.Brain.Fitness ?? 1.0;
-
-            if (bestFitness > 0)
+            // השווה בין ה-10 הטובים ביותר
+            for (int i = 0; i < Math.Min(10, population.Count); i++)
             {
-                double weakness = 1.0 - (avgParentFitness / bestFitness);
-                rate += weakness * 0.15;
+                for (int j = i + 1; j < Math.Min(10, population.Count); j++)
+                {
+                    totalDifference += Math.Abs(population[i].Brain.Fitness - population[j].Brain.Fitness);
+                    comparisons++;
+                }
             }
 
-            // Increase if stagnating
-            if (generationsWithoutImprovement > 5)
-            {
-                rate += 0.05 * (generationsWithoutImprovement / 5.0);
-            }
-
-            return Math.Min(rate, 0.5); // Cap at 50%
+            return comparisons > 0 ? totalDifference / comparisons : 0.0;
         }
 
-        private AIPlayer TournamentSelect(List<AIPlayer> sortedPopulation)
+        private AIPlayer SelectParent(List<AIPlayer> sortedPopulation)
         {
-            const int tournamentSize = 5;
-            int size = Math.Min(tournamentSize, sortedPopulation.Count);
-
+            int tournamentSize = Math.Min(5, sortedPopulation.Count);
             AIPlayer best = sortedPopulation[random.Next(sortedPopulation.Count)];
-            for (int i = 1; i < size; i++)
+
+            for (int i = 1; i < tournamentSize; i++)
             {
                 AIPlayer contestant = sortedPopulation[random.Next(sortedPopulation.Count)];
                 if (contestant.Brain.Fitness > best.Brain.Fitness)
@@ -410,52 +335,94 @@ namespace checkersclaude
             return best;
         }
 
-        #endregion
-
-        #region Diversity Management
-
-        private void InjectDiversity()
+        private void UpdateStats()
         {
-            var sortedPop = Population.OrderBy(p => p.Brain.Fitness).ToList();
-            int replaceCount = (int)(populationSize * 0.2);
-
-            // Replace weakest 20% with new random players
-            for (int i = 0; i < replaceCount; i++)
-            {
-                sortedPop[i] = new AIPlayer(random);
-            }
-
-            // Heavily mutate middle 20%
-            int mutateStart = replaceCount;
-            int mutateEnd = mutateStart + replaceCount;
-
-            for (int i = mutateStart; i < mutateEnd && i < sortedPop.Count; i++)
-            {
-                sortedPop[i].Mutate(0.3);
-            }
+            CurrentStats.Generation = Generation;
+            CurrentStats.BestFitness = BestPlayer.Brain.Fitness;
+            CurrentStats.AverageFitness = Population.Average(p => p.Brain.Fitness);
+            CurrentStats.BestWinRate = BestPlayer.Stats.WinRate;
+            CurrentStats.AverageWinRate = Population.Average(p => p.Stats.WinRate);
+            CurrentStats.BestGamesPlayed = BestPlayer.Stats.GamesPlayed;
         }
-
-        #endregion
-
-        #region Reporting
 
         public string GetGenerationReport()
         {
-            string warning = generationsWithoutImprovement > 10
-                ? $" ⚠ Stagnation: {generationsWithoutImprovement} gen"
-                : "";
-
             return $"Generation {CurrentStats.Generation} | " +
-                   $"Best: {CurrentStats.BestFitness:F2} | " +
-                   $"Avg: {CurrentStats.AverageFitness:F2} | " +
-                   $"Win Rate: {CurrentStats.BestWinRate:P1} ({CurrentStats.AverageWinRate:P1} avg)" +
-                   warning;
+                   $"Best Fitness: {CurrentStats.BestFitness:F2} | " +
+                   $"Avg Fitness: {CurrentStats.AverageFitness:F2} | " +
+                   $"Best Win Rate: {CurrentStats.BestWinRate:P1} | " +
+                   $"Avg Win Rate: {CurrentStats.AverageWinRate:P1}";
         }
 
-        #endregion
-    }
+        /// <summary>
+        /// שמירת checkpoint אוטומטית
+        /// </summary>
+        private void SaveCheckpoint()
+        {
+            try
+            {
+                string filename = Path.Combine(checkpointDir, $"checkpoint_gen_{Generation}.dat");
+                BestPlayer.Brain.SaveToFile(filename);
 
-    #region Configuration & Stats
+                // שמירת מטא-דאטה
+                string metaFile = Path.Combine(checkpointDir, $"checkpoint_gen_{Generation}_meta.txt");
+                File.WriteAllText(metaFile,
+                    $"Generation: {Generation}\n" +
+                    $"Best Fitness: {BestPlayer.Brain.Fitness:F2}\n" +
+                    $"Avg Fitness: {CurrentStats.AverageFitness:F2}\n" +
+                    $"Best Win Rate: {BestPlayer.Stats.WinRate:P1}\n" +
+                    $"Avg Win Rate: {CurrentStats.AverageWinRate:P1}\n" +
+                    $"Population Size: {populationSize}\n" +
+                    $"Mutation Rate: {mutationRate}\n" +
+                    $"Elite Percentage: {elitePercentage}\n" +
+                    $"Timestamp: {DateTime.Now}");
+
+                // גם שמירה לקובץ הראשי
+                BestPlayer.Brain.SaveToFile("best_checkers_ai.dat");
+            }
+            catch (Exception ex)
+            {
+                // התעלם משגיאות שמירה
+                System.Diagnostics.Debug.WriteLine($"Failed to save checkpoint: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// שמירה ידנית של הרשת הטובה ביותר
+        /// </summary>
+        public void SaveBestNetwork(string filename = "best_checkers_ai.dat")
+        {
+            if (BestPlayer != null)
+            {
+                BestPlayer.Brain.SaveToFile(filename);
+            }
+        }
+
+        /// <summary>
+        /// טעינת checkpoint
+        /// </summary>
+        public bool LoadCheckpoint(string filename)
+        {
+            try
+            {
+                var brain = checkersclaude.AI.DeepNeuralNetwork.LoadFromFile(filename);
+
+                // החלף את הטוב ביותר באוכלוסייה
+                if (Population != null && Population.Count > 0)
+                {
+                    Population[0] = new AIPlayer(brain);
+                    BestPlayer = Population[0];
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+
+            return false;
+        }
+    }
 
     public class TrainingConfig
     {
@@ -478,6 +445,4 @@ namespace checkersclaude
         public double AverageWinRate { get; set; }
         public int BestGamesPlayed { get; set; }
     }
-
-    #endregion
 }
