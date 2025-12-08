@@ -5,7 +5,7 @@ using checkers_neural_network.AI;
 
 namespace checkers_neural_network
 {
-    /// <summary>
+    /// <sumary>
     /// רמות קושי למשחק
     /// </summary>
     public enum DifficultyLevel
