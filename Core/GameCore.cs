@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace checkersclaude
+namespace checkers_neural_network
 {
     // ==================== ENUMS ====================
     public enum PieceColor { Red, Black }

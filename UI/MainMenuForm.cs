@@ -2,9 +2,9 @@
 using System.Drawing;
 using System.Windows.Forms;
 using System.IO;
-using checkersclaude.AI;
+using checkers_neural_network.AI;
 
-namespace checkersclaude
+namespace checkers_neural_network
 {
     public class MainMenuForm : Form
     {

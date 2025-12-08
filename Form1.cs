@@ -8,7 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace checkersclaude
+namespace checkers_neural_network
 {
     public partial class Form1: Form
     {

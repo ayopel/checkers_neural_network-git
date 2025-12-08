@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Windows.Forms;
 
-namespace checkersclaude
+namespace checkers_neural_network
 {
     static class Program
     {

@@ -1,7 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 
-namespace checkersclaude
+namespace checkers_neural_network
 {
     public class GameEngine
     {

@@ -1,9 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using checkersclaude.AI;
+using checkers_neural_network.AI;
 
-namespace checkersclaude
+namespace checkers_neural_network
 {
     /// <summary>
     /// רמות קושי למשחק

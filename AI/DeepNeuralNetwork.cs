@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 
-namespace checkersclaude.AI
+namespace checkers_neural_network.AI
 {
     public class DeepNeuralNetwork
     {

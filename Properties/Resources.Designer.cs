@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-namespace checkersclaude.Properties
+namespace checkers_neural_network.Properties
 {
 
 

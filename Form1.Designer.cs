@@ -1,4 +1,4 @@
-﻿namespace checkersclaude
+﻿namespace checkers_neural_network
 {
     partial class Form1
     {

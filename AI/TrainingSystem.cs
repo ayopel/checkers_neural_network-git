@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.IO;
 
-namespace checkersclaude
+namespace checkers_neural_network
 {
     public class TrainingSystem
     {
@@ -405,7 +405,7 @@ namespace checkersclaude
         {
             try
             {
-                var brain = checkersclaude.AI.DeepNeuralNetwork.LoadFromFile(filename);
+                var brain = checkers_neural_network.AI.DeepNeuralNetwork.LoadFromFile(filename);
 
                 // החלף את הטוב ביותר באוכלוסייה
                 if (Population != null && Population.Count > 0)

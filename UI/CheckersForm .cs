@@ -4,7 +4,7 @@ using System.Windows.Forms;
 using System.Linq;
 using System.Collections.Generic;
 
-namespace checkersclaude
+namespace checkers_neural_network
 {
     public class CheckersForm : Form
     {

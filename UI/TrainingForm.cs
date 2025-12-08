@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace checkersclaude
+namespace checkers_neural_network
 {
     public class TrainingForm : Form
     {
