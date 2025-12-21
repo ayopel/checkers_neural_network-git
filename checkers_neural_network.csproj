@@ -51,6 +51,7 @@
     <Compile Include="AI\TrainingSystem.cs" />
     <Compile Include="Core\GameCore.cs" />
     <Compile Include="Core\GameEngine.cs" />
+    <Compile Include="Core\PlayerStats.cs" />
     <Compile Include="Form1.cs">
       <SubType>Form</SubType>
     </Compile>

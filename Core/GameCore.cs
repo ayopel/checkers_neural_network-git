@@ -11,6 +11,15 @@ namespace checkers_neural_network
     public enum GameMode { HumanVsHuman, HumanVsAI }
     public enum GameResult { Win, Loss, Draw }
 
+    // ==================== CONSTANTS ====================
+    public static class GameConstants
+    {
+        public const int BoardSize = 8;
+        public const int KingRowRed = 0;
+        public const int KingRowBlack = 7;
+        public const int InitialPiecesPerPlayer = 12;
+    }
+
     // ==================== POSITION ====================
     public struct Position : IEquatable<Position>
     {
@@ -25,7 +34,7 @@ namespace checkers_neural_network
 
         public bool Equals(Position other) => Row == other.Row && Col == other.Col;
         public override bool Equals(object obj) => obj is Position other && Equals(other);
-        public override int GetHashCode() => Row.GetHashCode() ^ Col.GetHashCode();
+        public override int GetHashCode() => (Row << 16) ^ Col;
         public static bool operator ==(Position left, Position right) => left.Equals(right);
         public static bool operator !=(Position left, Position right) => !left.Equals(right);
         public override string ToString() => $"({Row},{Col})";
@@ -83,14 +92,15 @@ namespace checkers_neural_network
     // ==================== BOARD ====================
     public class Board
     {
-        private const int BoardSize = 8;
         private readonly Piece[,] squares;
+        private string cachedStateString;
+        private bool stateStringDirty = true;
 
         public Board() : this(true) { }
 
         private Board(bool initialize)
         {
-            squares = new Piece[BoardSize, BoardSize];
+            squares = new Piece[GameConstants.BoardSize, GameConstants.BoardSize];
             if (initialize) InitializeBoard();
         }
 
@@ -98,21 +108,23 @@ namespace checkers_neural_network
         {
             for (int row = 0; row < 3; row++)
             {
-                for (int col = 0; col < BoardSize; col++)
+                for (int col = 0; col < GameConstants.BoardSize; col++)
                 {
                     if ((row + col) % 2 == 1)
                         squares[row, col] = new Piece(PieceColor.Black, new Position(row, col));
                 }
             }
 
-            for (int row = 5; row < BoardSize; row++)
+            for (int row = 5; row < GameConstants.BoardSize; row++)
             {
-                for (int col = 0; col < BoardSize; col++)
+                for (int col = 0; col < GameConstants.BoardSize; col++)
                 {
                     if ((row + col) % 2 == 1)
                         squares[row, col] = new Piece(PieceColor.Red, new Position(row, col));
                 }
             }
+
+            stateStringDirty = true;
         }
 
         public Piece GetPiece(Position pos) => IsValidPosition(pos) ? squares[pos.Row, pos.Col] : null;
@@ -123,16 +135,22 @@ namespace checkers_neural_network
             {
                 squares[pos.Row, pos.Col] = piece;
                 if (piece != null) piece.Position = pos;
+                stateStringDirty = true;
             }
         }
 
         public void RemovePiece(Position pos)
         {
-            if (IsValidPosition(pos)) squares[pos.Row, pos.Col] = null;
+            if (IsValidPosition(pos))
+            {
+                squares[pos.Row, pos.Col] = null;
+                stateStringDirty = true;
+            }
         }
 
         public bool IsValidPosition(Position pos) =>
-            pos.Row >= 0 && pos.Row < BoardSize && pos.Col >= 0 && pos.Col < BoardSize;
+            pos.Row >= 0 && pos.Row < GameConstants.BoardSize &&
+            pos.Col >= 0 && pos.Col < GameConstants.BoardSize;
 
         public bool IsPlayableSquare(Position pos) =>
             IsValidPosition(pos) && (pos.Row + pos.Col) % 2 == 1;
@@ -140,9 +158,9 @@ namespace checkers_neural_network
         public List<Piece> GetAllPieces(PieceColor color)
         {
             var pieces = new List<Piece>();
-            for (int row = 0; row < BoardSize; row++)
+            for (int row = 0; row < GameConstants.BoardSize; row++)
             {
-                for (int col = 0; col < BoardSize; col++)
+                for (int col = 0; col < GameConstants.BoardSize; col++)
                 {
                     var piece = squares[row, col];
                     if (piece != null && piece.Color == color)
@@ -152,7 +170,7 @@ namespace checkers_neural_network
             return pieces;
         }
 
-        public int GetBoardSize() => BoardSize;
+        public int GetBoardSize() => GameConstants.BoardSize;
 
         public void ApplyMove(Move move)
         {
@@ -171,20 +189,24 @@ namespace checkers_neural_network
 
             if (piece.Type != PieceType.King)
             {
-                if ((piece.Color == PieceColor.Red && move.To.Row == 0) ||
-                    (piece.Color == PieceColor.Black && move.To.Row == BoardSize - 1))
+                int kingRow = piece.Color == PieceColor.Red ?
+                    GameConstants.KingRowRed : GameConstants.KingRowBlack;
+
+                if (move.To.Row == kingRow)
                 {
                     piece.PromoteToKing();
                 }
             }
+
+            stateStringDirty = true;
         }
 
         public Board Clone()
         {
             var clonedBoard = new Board(false);
-            for (int row = 0; row < BoardSize; row++)
+            for (int row = 0; row < GameConstants.BoardSize; row++)
             {
-                for (int col = 0; col < BoardSize; col++)
+                for (int col = 0; col < GameConstants.BoardSize; col++)
                 {
                     var piece = squares[row, col];
                     if (piece != null)
@@ -196,16 +218,20 @@ namespace checkers_neural_network
                     }
                 }
             }
+            clonedBoard.stateStringDirty = true;
             return clonedBoard;
         }
 
         public string GetStateString()
         {
+            if (!stateStringDirty && cachedStateString != null)
+                return cachedStateString;
+
             var chars = new char[64];
             int idx = 0;
-            for (int row = 0; row < BoardSize; row++)
+            for (int row = 0; row < GameConstants.BoardSize; row++)
             {
-                for (int col = 0; col < BoardSize; col++)
+                for (int col = 0; col < GameConstants.BoardSize; col++)
                 {
                     var piece = squares[row, col];
                     chars[idx++] = piece == null ? '.' :
@@ -214,7 +240,10 @@ namespace checkers_neural_network
                                    (piece.Type == PieceType.King ? 'B' : 'b');
                 }
             }
-            return new string(chars);
+
+            cachedStateString = new string(chars);
+            stateStringDirty = false;
+            return cachedStateString;
         }
     }
 
@@ -222,28 +251,46 @@ namespace checkers_neural_network
     public class MoveValidator
     {
         private readonly Board board;
-        private Dictionary<string, List<Move>> moveCache;
+        private Dictionary<int, List<Move>> moveCache;
+        private bool hasJumpsForRed;
+        private bool hasJumpsForBlack;
+        private bool jumpsCacheValid;
 
         public MoveValidator(Board board)
         {
             this.board = board;
-            this.moveCache = new Dictionary<string, List<Move>>();
+            this.moveCache = new Dictionary<int, List<Move>>();
+            this.jumpsCacheValid = false;
         }
 
         public void ClearCache()
         {
             moveCache.Clear();
+            jumpsCacheValid = false;
+        }
+
+        private int GetCacheKey(Piece piece)
+        {
+            // Simple hash combining position and piece properties
+            return (piece.Position.Row << 12) |
+                   (piece.Position.Col << 8) |
+                   ((int)piece.Color << 4) |
+                   (int)piece.Type;
         }
 
         public List<Move> GetValidMoves(Piece piece)
         {
-            string cacheKey = $"{piece.Position}_{piece.Color}_{piece.Type}_{board.GetStateString()}";
+            int cacheKey = GetCacheKey(piece);
 
-            if (moveCache.ContainsKey(cacheKey))
-                return new List<Move>(moveCache[cacheKey]);
+            if (moveCache.TryGetValue(cacheKey, out List<Move> cachedMoves))
+                return new List<Move>(cachedMoves);
 
             List<Move> moves;
-            if (HasAvailableJumps(piece.Color))
+
+            // Check if there are any jumps available for this color
+            bool mustJump = HasAvailableJumps(piece.Color);
+
+            if (mustJump)
             {
                 moves = piece.Type == PieceType.King ?
                     GetValidKingJumps(piece) :
@@ -387,6 +434,22 @@ namespace checkers_neural_network
 
         public bool HasAvailableJumps(PieceColor color)
         {
+            // Use cached result if available
+            if (jumpsCacheValid)
+            {
+                return color == PieceColor.Red ? hasJumpsForRed : hasJumpsForBlack;
+            }
+
+            // Calculate for both colors
+            hasJumpsForRed = CheckForJumps(PieceColor.Red);
+            hasJumpsForBlack = CheckForJumps(PieceColor.Black);
+            jumpsCacheValid = true;
+
+            return color == PieceColor.Red ? hasJumpsForRed : hasJumpsForBlack;
+        }
+
+        private bool CheckForJumps(PieceColor color)
+        {
             var pieces = board.GetAllPieces(color);
             foreach (var piece in pieces)
             {
@@ -398,4 +461,4 @@ namespace checkers_neural_network
             return false;
         }
     }
-}   
+}

@@ -1,15 +1,14 @@
 ﻿// ============================================================================
-// IMPROVED TRAINING SYSTEM
+// TRAINING SYSTEM - Thread-Safe Version
 // ============================================================================
-// Fixed: Double-counting captures bug
-// Improved: Better matchmaking, adaptive training
+// Fixed: Thread safety issues with parallel processing
+// Fixed: Proper use of thread-safe PlayerStats methods
 // ============================================================================
 
-using checkers_neural_network;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace checkers_neural_network
@@ -31,10 +30,11 @@ namespace checkers_neural_network
 
         private double historicalBestFitness = 0;
         private int generationsWithoutImprovement = 0;
-        private const int DiversityResetThreshold = 15;
+        private const int DiversityResetThreshold = 20;
 
-        // Thread-safe stats tracking
-        private readonly object statsLock = new object();
+        // Thread-local random for parallel processing
+        private static readonly ThreadLocal<Random> ThreadLocalRandom =
+            new ThreadLocal<Random>(() => new Random(Guid.NewGuid().GetHashCode()));
 
         #endregion
 
@@ -58,7 +58,7 @@ namespace checkers_neural_network
             Population = new List<AIPlayer>(populationSize);
             for (int i = 0; i < populationSize; i++)
             {
-                Population.Add(new AIPlayer(new Random(random.Next())));
+                Population.Add(new AIPlayer(random));
             }
         }
 
@@ -83,16 +83,7 @@ namespace checkers_neural_network
         {
             foreach (var player in Population)
             {
-                player.Stats.GamesPlayed = 0;
-                player.Stats.Wins = 0;
-                player.Stats.Losses = 0;
-                player.Stats.Draws = 0;
-                player.Stats.TotalMoves = 0;
-                player.Stats.PiecesCaptured = 0;
-                player.Stats.PiecesLost = 0;
-                player.Stats.KingsMade = 0;
-                player.Stats.KingsCaptured = 0;
-                player.Stats.KingsLost = 0;
+                player.Stats.Reset();
             }
         }
 
@@ -106,16 +97,11 @@ namespace checkers_neural_network
 
         private void UpdateBestPlayer()
         {
-            var currentBest = Population.OrderByDescending(p => p.Brain.Fitness).First();
+            BestPlayer = Population.OrderByDescending(p => p.Brain.Fitness).First();
 
-            if (BestPlayer == null || currentBest.Brain.Fitness > BestPlayer.Brain.Fitness)
+            if (BestPlayer.Brain.Fitness > historicalBestFitness)
             {
-                BestPlayer = currentBest.Clone();
-            }
-
-            if (currentBest.Brain.Fitness > historicalBestFitness)
-            {
-                historicalBestFitness = currentBest.Brain.Fitness;
+                historicalBestFitness = BestPlayer.Brain.Fitness;
                 generationsWithoutImprovement = 0;
             }
             else
@@ -126,16 +112,12 @@ namespace checkers_neural_network
 
         private void UpdateGenerationStats()
         {
-            var sortedPop = Population.OrderByDescending(p => p.Brain.Fitness).ToList();
-
             CurrentStats.Generation = Generation;
-            CurrentStats.BestFitness = sortedPop[0].Brain.Fitness;
+            CurrentStats.BestFitness = BestPlayer.Brain.Fitness;
             CurrentStats.AverageFitness = Population.Average(p => p.Brain.Fitness);
-            CurrentStats.BestWinRate = sortedPop[0].Stats.WinRate;
+            CurrentStats.BestWinRate = BestPlayer.Stats.WinRate;
             CurrentStats.AverageWinRate = Population.Average(p => p.Stats.WinRate);
-            CurrentStats.BestGamesPlayed = sortedPop[0].Stats.GamesPlayed;
-            CurrentStats.MedianFitness = sortedPop[populationSize / 2].Brain.Fitness;
-            CurrentStats.WorstFitness = sortedPop.Last().Brain.Fitness;
+            CurrentStats.BestGamesPlayed = BestPlayer.Stats.GamesPlayed;
         }
 
         private void CheckForStagnation()
@@ -157,25 +139,18 @@ namespace checkers_neural_network
 
             if (config.UseParallelProcessing)
             {
-                // Use thread-local random for parallel execution
-                Parallel.ForEach(matchups, () => new Random(random.Next()),
-                    (matchup, state, localRandom) =>
-                    {
-                        PlayMatchup(matchup, localRandom);
-                        return localRandom;
-                    },
-                    _ => { });
+                Parallel.ForEach(matchups, matchup => PlayMatchup(matchup));
             }
             else
             {
                 foreach (var matchup in matchups)
                 {
-                    PlayMatchup(matchup, random);
+                    PlayMatchup(matchup);
                 }
             }
         }
 
-        private void PlayMatchup(Tuple<AIPlayer, AIPlayer> matchup, Random localRandom)
+        private void PlayMatchup(Tuple<AIPlayer, AIPlayer> matchup)
         {
             for (int game = 0; game < config.GamesPerPair; game++)
             {
@@ -184,38 +159,30 @@ namespace checkers_neural_network
                 AIPlayer red = redFirst ? matchup.Item1 : matchup.Item2;
                 AIPlayer black = redFirst ? matchup.Item2 : matchup.Item1;
 
-                PlayGame(red, black, localRandom);
+                PlayGame(red, black);
             }
         }
 
         private List<Tuple<AIPlayer, AIPlayer>> GenerateMatchups()
         {
             var matchups = new List<Tuple<AIPlayer, AIPlayer>>();
-
-            // Sort by fitness for skill-based matchmaking (after first generation)
             var sortedPop = Generation > 1
                 ? Population.OrderByDescending(p => p.Brain.Fitness).ToList()
-                : Population.OrderBy(p => random.Next()).ToList(); // Shuffle for gen 1
+                : Population.ToList();
 
             for (int i = 0; i < Population.Count; i++)
             {
-                var selectedOpponents = new HashSet<int>();
                 int numOpponents = Math.Min(config.OpponentsPerPlayer, Population.Count - 1);
-                int attempts = 0;
-                const int maxAttempts = 100;
 
-                while (selectedOpponents.Count < numOpponents && attempts < maxAttempts)
+                for (int j = 0; j < numOpponents; j++)
                 {
                     int opponentIdx = SelectOpponent(i, sortedPop.Count);
-
-                    if (opponentIdx != i && !selectedOpponents.Contains(opponentIdx))
+                    if (opponentIdx != i)
                     {
-                        selectedOpponents.Add(opponentIdx);
                         matchups.Add(new Tuple<AIPlayer, AIPlayer>(
-                            sortedPop[i],
+                            Population[i],
                             sortedPop[opponentIdx]));
                     }
-                    attempts++;
                 }
             }
 
@@ -224,15 +191,12 @@ namespace checkers_neural_network
 
         private int SelectOpponent(int playerIndex, int populationCount)
         {
-            // Adaptive matchmaking based on generation
-            double similarSkillChance = Generation > 10 ? 0.5 : 0.3;
-
-            if (Generation > 1 && random.NextDouble() < similarSkillChance)
+            // 60% similar skill, 40% random (better learning)
+            if (Generation > 1 && random.NextDouble() < 0.6)
             {
-                // Similar skill opponent (within ±4 ranks)
-                int range = Math.Min(4, populationCount / 4);
-                int minRank = Math.Max(0, playerIndex - range);
-                int maxRank = Math.Min(populationCount - 1, playerIndex + range);
+                // Similar skill opponent (within ±3 ranks)
+                int minRank = Math.Max(0, playerIndex - 3);
+                int maxRank = Math.Min(populationCount - 1, playerIndex + 3);
                 return random.Next(minRank, maxRank + 1);
             }
             else
@@ -246,12 +210,11 @@ namespace checkers_neural_network
 
         #region Game Simulation
 
-        private void PlayGame(AIPlayer redPlayer, AIPlayer blackPlayer, Random localRandom)
+        private void PlayGame(AIPlayer redPlayer, AIPlayer blackPlayer)
         {
             GameEngine game = new GameEngine();
-            var stateHistory = new Dictionary<string, int>();
+            Dictionary<string, int> stateHistory = new Dictionary<string, int>();
             int moveCount = 0;
-            int movesWithoutCapture = 0;
 
             while (!game.IsGameOver() && moveCount < config.MaxMovesPerGame)
             {
@@ -261,21 +224,15 @@ namespace checkers_neural_network
                 Move move = SelectMove(game, currentPlayer, currentColor);
                 if (move == null) break;
 
-                // Track stats BEFORE executing move
+                // Track stats before move (thread-safe)
                 TrackMoveStats(currentPlayer, redPlayer, blackPlayer, move, game);
 
                 // Execute move
                 game.SelectPiece(move.From);
                 game.MovePiece(move.To);
 
-                // Track moves without capture for draw detection
-                if (move.IsJump)
-                    movesWithoutCapture = 0;
-                else
-                    movesWithoutCapture++;
-
-                // Check for draw conditions
-                if (IsDrawByRepetition(game.Board, stateHistory) || movesWithoutCapture >= 40)
+                // Check for draw by repetition
+                if (IsDrawByRepetition(game.Board, stateHistory))
                 {
                     RecordDraw(redPlayer, blackPlayer, game.Board);
                     return;
@@ -284,7 +241,7 @@ namespace checkers_neural_network
                 moveCount++;
             }
 
-            RecordGameResult(game, redPlayer, blackPlayer, moveCount);
+            RecordGameResult(game, redPlayer, blackPlayer);
         }
 
         private Move SelectMove(GameEngine game, AIPlayer player, PieceColor color)
@@ -298,23 +255,20 @@ namespace checkers_neural_network
         {
             if (!move.IsJump) return;
 
-            lock (statsLock)
+            // Track captures (thread-safe)
+            currentPlayer.Stats.AddPiecesCaptured(move.JumpedPositions.Count);
+
+            // Track king captures
+            foreach (var jumpedPos in move.JumpedPositions)
             {
-                // Track captures (ONLY here, not in RecordGameResult)
-                currentPlayer.Stats.PiecesCaptured += move.JumpedPositions.Count;
-
-                // Track king-specific stats
-                foreach (var jumpedPos in move.JumpedPositions)
+                Piece captured = game.Board.GetPiece(jumpedPos);
+                if (captured != null && captured.Type == PieceType.King)
                 {
-                    Piece captured = game.Board.GetPiece(jumpedPos);
-                    if (captured?.Type == PieceType.King)
-                    {
-                        currentPlayer.Stats.KingsCaptured++;
+                    currentPlayer.Stats.IncrementKingsCaptured();
 
-                        // Opponent lost a king
-                        AIPlayer opponent = currentPlayer == redPlayer ? blackPlayer : redPlayer;
-                        opponent.Stats.KingsLost++;
-                    }
+                    // Opponent lost a king
+                    AIPlayer opponent = currentPlayer == redPlayer ? blackPlayer : redPlayer;
+                    opponent.Stats.IncrementKingsLost();
                 }
             }
 
@@ -327,10 +281,7 @@ namespace checkers_neural_network
 
                 if (move.To.Row == kingRow)
                 {
-                    lock (statsLock)
-                    {
-                        currentPlayer.Stats.KingsMade++;
-                    }
+                    currentPlayer.Stats.IncrementKingsMade();
                 }
             }
         }
@@ -350,36 +301,28 @@ namespace checkers_neural_network
             int redPieces = board.GetAllPieces(PieceColor.Red).Count;
             int blackPieces = board.GetAllPieces(PieceColor.Black).Count;
 
-            lock (statsLock)
-            {
-                red.UpdateGameResult(GameResult.Draw, redPieces, blackPieces);
-                black.UpdateGameResult(GameResult.Draw, blackPieces, redPieces);
-            }
+            red.UpdateGameResult(GameResult.Draw, redPieces, blackPieces);
+            black.UpdateGameResult(GameResult.Draw, blackPieces, redPieces);
         }
 
-        private void RecordGameResult(GameEngine game, AIPlayer red, AIPlayer black, int moveCount)
+        private void RecordGameResult(GameEngine game, AIPlayer red, AIPlayer black)
         {
             int redPieces = game.Board.GetAllPieces(PieceColor.Red).Count;
             int blackPieces = game.Board.GetAllPieces(PieceColor.Black).Count;
 
-            lock (statsLock)
+            if (game.State == GameState.RedWins)
             {
-                if (game.State == GameState.RedWins)
-                {
-                    red.UpdateGameResult(GameResult.Win, redPieces, blackPieces);
-                    black.UpdateGameResult(GameResult.Loss, blackPieces, redPieces);
-                }
-                else if (game.State == GameState.BlackWins)
-                {
-                    black.UpdateGameResult(GameResult.Win, blackPieces, redPieces);
-                    red.UpdateGameResult(GameResult.Loss, redPieces, blackPieces);
-                }
-                else
-                {
-                    // Timeout or no moves - count as draw
-                    red.UpdateGameResult(GameResult.Draw, redPieces, blackPieces);
-                    black.UpdateGameResult(GameResult.Draw, blackPieces, redPieces);
-                }
+                red.UpdateGameResult(GameResult.Win, redPieces, blackPieces);
+                black.UpdateGameResult(GameResult.Loss, blackPieces, redPieces);
+            }
+            else if (game.State == GameState.BlackWins)
+            {
+                black.UpdateGameResult(GameResult.Win, blackPieces, redPieces);
+                red.UpdateGameResult(GameResult.Loss, redPieces, blackPieces);
+            }
+            else
+            {
+                RecordDraw(red, black, game.Board);
             }
         }
 
@@ -405,32 +348,18 @@ namespace checkers_neural_network
             var sortedPop = Population.OrderByDescending(p => p.Brain.Fitness).ToList();
             List<AIPlayer> newGeneration = new List<AIPlayer>(populationSize);
 
-            // Elitism: keep best performers (unchanged)
+            // Elitism: keep best performers
             int eliteCount = Math.Max(2, (int)(populationSize * elitePercentage));
             for (int i = 0; i < eliteCount; i++)
             {
                 newGeneration.Add(sortedPop[i].Clone());
             }
 
-            // Add one mutated version of the best player
-            var mutatedBest = sortedPop[0].Clone();
-            mutatedBest.Mutate(mutationRate * 0.5);
-            newGeneration.Add(mutatedBest);
-
             // Breeding: create offspring
             while (newGeneration.Count < populationSize)
             {
                 AIPlayer parent1 = TournamentSelect(sortedPop);
                 AIPlayer parent2 = TournamentSelect(sortedPop);
-
-                // Ensure different parents
-                int attempts = 0;
-                while (parent1 == parent2 && attempts < 10)
-                {
-                    parent2 = TournamentSelect(sortedPop);
-                    attempts++;
-                }
-
                 AIPlayer child = Breed(parent1, parent2);
                 newGeneration.Add(child);
             }
@@ -457,30 +386,25 @@ namespace checkers_neural_network
             if (bestFitness > 0)
             {
                 double weakness = 1.0 - (avgParentFitness / bestFitness);
-                rate += Math.Min(weakness * 0.1, 0.15);
+                rate += weakness * 0.15;
             }
 
             // Increase if stagnating
             if (generationsWithoutImprovement > 5)
             {
-                rate += 0.03 * Math.Min(generationsWithoutImprovement - 5, 10);
+                rate += 0.05 * (generationsWithoutImprovement / 5.0);
             }
 
-            // Decrease mutation in later generations for fine-tuning
-            if (Generation > 50 && generationsWithoutImprovement < 5)
-            {
-                rate *= 0.8;
-            }
-
-            return Math.Min(Math.Max(rate, 0.02), 0.4); // Clamp between 2% and 40%
+            return Math.Min(rate, 0.5); // Cap at 50%
         }
 
         private AIPlayer TournamentSelect(List<AIPlayer> sortedPopulation)
         {
-            int tournamentSize = Math.Min(5, sortedPopulation.Count);
+            const int tournamentSize = 5;
+            int size = Math.Min(tournamentSize, sortedPopulation.Count);
 
             AIPlayer best = sortedPopulation[random.Next(sortedPopulation.Count)];
-            for (int i = 1; i < tournamentSize; i++)
+            for (int i = 1; i < size; i++)
             {
                 AIPlayer contestant = sortedPopulation[random.Next(sortedPopulation.Count)];
                 if (contestant.Brain.Fitness > best.Brain.Fitness)
@@ -497,27 +421,21 @@ namespace checkers_neural_network
         private void InjectDiversity()
         {
             var sortedPop = Population.OrderBy(p => p.Brain.Fitness).ToList();
-            int replaceCount = (int)(populationSize * 0.25);
+            int replaceCount = (int)(populationSize * 0.2);
 
-            // Replace weakest 25% with new random players
-            for (int i = 0; i < replaceCount && i < sortedPop.Count; i++)
+            // Replace weakest 20% with new random players
+            for (int i = 0; i < replaceCount; i++)
             {
-                int popIndex = Population.IndexOf(sortedPop[i]);
-                if (popIndex >= 0)
-                {
-                    Population[popIndex] = new AIPlayer(new Random(random.Next()));
-                }
+                sortedPop[i] = new AIPlayer(random);
             }
 
-            // Heavily mutate next 15%
-            int mutateCount = (int)(populationSize * 0.15);
-            for (int i = replaceCount; i < replaceCount + mutateCount && i < sortedPop.Count; i++)
+            // Heavily mutate middle 20%
+            int mutateStart = replaceCount;
+            int mutateEnd = mutateStart + replaceCount;
+
+            for (int i = mutateStart; i < mutateEnd && i < sortedPop.Count; i++)
             {
-                int popIndex = Population.IndexOf(sortedPop[i]);
-                if (popIndex >= 0)
-                {
-                    Population[popIndex].Mutate(0.35);
-                }
+                sortedPop[i].Mutate(0.3);
             }
         }
 
@@ -527,30 +445,15 @@ namespace checkers_neural_network
 
         public string GetGenerationReport()
         {
-            string warning = "";
-            if (generationsWithoutImprovement > 10)
-                warning = $" ⚠ Stagnation: {generationsWithoutImprovement} gen";
-            else if (generationsWithoutImprovement > 5)
-                warning = $" ⚡ Plateau: {generationsWithoutImprovement} gen";
+            string warning = generationsWithoutImprovement > 10
+                ? $" ⚠ Stagnation: {generationsWithoutImprovement} gen"
+                : "";
 
-            return $"Gen {CurrentStats.Generation} | " +
-                   $"Best: {CurrentStats.BestFitness:F1} | " +
-                   $"Avg: {CurrentStats.AverageFitness:F1} | " +
-                   $"Win: {CurrentStats.BestWinRate:P0} ({CurrentStats.AverageWinRate:P0} avg)" +
+            return $"Generation {CurrentStats.Generation} | " +
+                   $"Best: {CurrentStats.BestFitness:F2} | " +
+                   $"Avg: {CurrentStats.AverageFitness:F2} | " +
+                   $"Win Rate: {CurrentStats.BestWinRate:P1} ({CurrentStats.AverageWinRate:P1} avg)" +
                    warning;
-        }
-
-        public string GetDetailedReport()
-        {
-            return $"=== Generation {CurrentStats.Generation} Report ===\n" +
-                   $"Best Fitness:    {CurrentStats.BestFitness:F2}\n" +
-                   $"Median Fitness:  {CurrentStats.MedianFitness:F2}\n" +
-                   $"Average Fitness: {CurrentStats.AverageFitness:F2}\n" +
-                   $"Worst Fitness:   {CurrentStats.WorstFitness:F2}\n" +
-                   $"Best Win Rate:   {CurrentStats.BestWinRate:P1}\n" +
-                   $"Avg Win Rate:    {CurrentStats.AverageWinRate:P1}\n" +
-                   $"Stagnation:      {generationsWithoutImprovement} generations\n" +
-                   $"Historical Best: {historicalBestFitness:F2}";
         }
 
         #endregion
@@ -565,7 +468,7 @@ namespace checkers_neural_network
         public double ElitePercentage { get; set; } = 0.1;
         public int GamesPerPair { get; set; } = 2;
         public int OpponentsPerPlayer { get; set; } = 5;
-        public int MaxMovesPerGame { get; set; } = 150;
+        public int MaxMovesPerGame { get; set; } = 200;
         public bool UseParallelProcessing { get; set; } = true;
         public int? Seed { get; set; } = null;
     }
@@ -575,8 +478,6 @@ namespace checkers_neural_network
         public int Generation { get; set; }
         public double BestFitness { get; set; }
         public double AverageFitness { get; set; }
-        public double MedianFitness { get; set; }
-        public double WorstFitness { get; set; }
         public double BestWinRate { get; set; }
         public double AverageWinRate { get; set; }
         public int BestGamesPlayed { get; set; }

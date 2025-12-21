@@ -14,7 +14,9 @@ namespace checkers_neural_network
         private bool mustContinueJumping;
         private readonly Dictionary<string, int> stateHistory;
         private readonly Stack<GameSnapshot> moveHistory;
-        private const int MAX_MOVES_WITHOUT_CAPTURE = 50;
+        private int movesWithoutCapture;
+        private const int MaxMovesWithoutCapture = 50;
+        private const int DrawByRepetitionCount = 3;
 
         public GameEngine()
         {
@@ -24,6 +26,7 @@ namespace checkers_neural_network
             stateHistory = new Dictionary<string, int>();
             moveHistory = new Stack<GameSnapshot>();
             MoveCount = 0;
+            movesWithoutCapture = 0;
         }
 
         public GameEngine(Board board)
@@ -34,6 +37,7 @@ namespace checkers_neural_network
             stateHistory = new Dictionary<string, int>();
             moveHistory = new Stack<GameSnapshot>();
             MoveCount = 0;
+            movesWithoutCapture = 0;
         }
 
         public bool SelectPiece(Position pos)
@@ -68,17 +72,33 @@ namespace checkers_neural_network
 
             bool wasJump = move.IsJump;
             Board.ApplyMove(move);
-            validator.ClearCache(); // Clear cache after board change
+            validator.ClearCache();
 
             MoveCount++;
 
+            // Track moves without capture for draw detection
             if (wasJump)
             {
-                var additionalJumps = validator.GetValidJumps(selectedPiece);
-                if (additionalJumps.Count > 0)
+                movesWithoutCapture = 0;
+            }
+            else
+            {
+                movesWithoutCapture++;
+            }
+
+            if (wasJump)
+            {
+                // Update selected piece reference after move
+                selectedPiece = Board.GetPiece(move.To);
+
+                if (selectedPiece != null)
                 {
-                    mustContinueJumping = true;
-                    return;
+                    var additionalJumps = validator.GetValidJumps(selectedPiece);
+                    if (additionalJumps.Count > 0)
+                    {
+                        mustContinueJumping = true;
+                        return;
+                    }
                 }
             }
 
@@ -110,6 +130,7 @@ namespace checkers_neural_network
                 BoardState = Board.Clone(),
                 GameState = State,
                 MoveCount = MoveCount,
+                MovesWithoutCapture = movesWithoutCapture,
                 StateHistory = new Dictionary<string, int>(stateHistory)
             };
             moveHistory.Push(snapshot);
@@ -126,6 +147,7 @@ namespace checkers_neural_network
             validator = new MoveValidator(Board);
             State = snapshot.GameState;
             MoveCount = snapshot.MoveCount;
+            movesWithoutCapture = snapshot.MovesWithoutCapture;
 
             stateHistory.Clear();
             foreach (var kvp in snapshot.StateHistory)
@@ -147,16 +169,31 @@ namespace checkers_neural_network
             var currentColor = GetCurrentTurnColor();
             var pieces = Board.GetAllPieces(currentColor);
 
-            if (pieces.Count == 0 || !HasAnyValidMoves(currentColor))
+            // No pieces left - opponent wins
+            if (pieces.Count == 0)
             {
                 State = currentColor == PieceColor.Red ? GameState.BlackWins : GameState.RedWins;
                 return;
             }
 
-            // Check for draw by repetition (optional)
-            if (stateHistory.Values.Any(count => count >= 3))
+            // No valid moves - opponent wins
+            if (!HasAnyValidMoves(currentColor))
             {
-                // Could add GameState.Draw if needed
+                State = currentColor == PieceColor.Red ? GameState.BlackWins : GameState.RedWins;
+                return;
+            }
+
+            // Check for draw by repetition
+            if (stateHistory.Values.Any(count => count >= DrawByRepetitionCount))
+            {
+                // Draw is treated as the current player losing (or could add GameState.Draw)
+                // For now, we'll let the game continue but training system detects this
+            }
+
+            // Check for draw by 50-move rule (no captures)
+            if (movesWithoutCapture >= MaxMovesWithoutCapture)
+            {
+                // Similar to above - training system handles this
             }
         }
 
@@ -202,6 +239,7 @@ namespace checkers_neural_network
             validator = new MoveValidator(Board);
             State = GameState.RedTurn;
             MoveCount = 0;
+            movesWithoutCapture = 0;
             stateHistory.Clear();
             moveHistory.Clear();
             selectedPiece = null;
@@ -210,6 +248,18 @@ namespace checkers_neural_network
 
         public bool IsGameOver() =>
             State == GameState.RedWins || State == GameState.BlackWins;
+
+        public bool IsDraw()
+        {
+            // Check for draw conditions
+            if (stateHistory.Values.Any(count => count >= DrawByRepetitionCount))
+                return true;
+
+            if (movesWithoutCapture >= MaxMovesWithoutCapture)
+                return true;
+
+            return false;
+        }
 
         public PieceColor? GetWinner()
         {
@@ -229,7 +279,8 @@ namespace checkers_neural_network
                 RedPieces = Board.GetAllPieces(PieceColor.Red).Count,
                 BlackPieces = Board.GetAllPieces(PieceColor.Black).Count,
                 RedKings = Board.GetAllPieces(PieceColor.Red).Count(p => p.Type == PieceType.King),
-                BlackKings = Board.GetAllPieces(PieceColor.Black).Count(p => p.Type == PieceType.King)
+                BlackKings = Board.GetAllPieces(PieceColor.Black).Count(p => p.Type == PieceType.King),
+                MovesWithoutCapture = movesWithoutCapture
             };
         }
 
@@ -261,6 +312,7 @@ namespace checkers_neural_network
         public Board BoardState { get; set; }
         public GameState GameState { get; set; }
         public int MoveCount { get; set; }
+        public int MovesWithoutCapture { get; set; }
         public Dictionary<string, int> StateHistory { get; set; }
     }
 
@@ -271,5 +323,6 @@ namespace checkers_neural_network
         public int BlackPieces { get; set; }
         public int RedKings { get; set; }
         public int BlackKings { get; set; }
+        public int MovesWithoutCapture { get; set; }
     }
 }
