@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 
 namespace checkers_neural_network
@@ -251,46 +252,28 @@ namespace checkers_neural_network
     public class MoveValidator
     {
         private readonly Board board;
-        private Dictionary<int, List<Move>> moveCache;
-        private bool hasJumpsForRed;
-        private bool hasJumpsForBlack;
-        private bool jumpsCacheValid;
+        private System.Collections.Concurrent.ConcurrentDictionary<string, List<Move>> moveCache =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, List<Move>>();
 
         public MoveValidator(Board board)
         {
             this.board = board;
-            this.moveCache = new Dictionary<int, List<Move>>();
-            this.jumpsCacheValid = false;
         }
 
         public void ClearCache()
         {
             moveCache.Clear();
-            jumpsCacheValid = false;
-        }
-
-        private int GetCacheKey(Piece piece)
-        {
-            // Simple hash combining position and piece properties
-            return (piece.Position.Row << 12) |
-                   (piece.Position.Col << 8) |
-                   ((int)piece.Color << 4) |
-                   (int)piece.Type;
         }
 
         public List<Move> GetValidMoves(Piece piece)
         {
-            int cacheKey = GetCacheKey(piece);
+            string cacheKey = $"{piece.Position}_{piece.Color}_{piece.Type}_{board.GetStateString()}";
 
             if (moveCache.TryGetValue(cacheKey, out List<Move> cachedMoves))
                 return new List<Move>(cachedMoves);
 
             List<Move> moves;
-
-            // Check if there are any jumps available for this color
-            bool mustJump = HasAvailableJumps(piece.Color);
-
-            if (mustJump)
+            if (HasAvailableJumps(piece.Color))
             {
                 moves = piece.Type == PieceType.King ?
                     GetValidKingJumps(piece) :
@@ -303,7 +286,7 @@ namespace checkers_neural_network
                     GetValidRegularMoves(piece);
             }
 
-            moveCache[cacheKey] = moves;
+            moveCache.TryAdd(cacheKey, moves);
             return new List<Move>(moves);
         }
 
@@ -433,22 +416,6 @@ namespace checkers_neural_network
         }
 
         public bool HasAvailableJumps(PieceColor color)
-        {
-            // Use cached result if available
-            if (jumpsCacheValid)
-            {
-                return color == PieceColor.Red ? hasJumpsForRed : hasJumpsForBlack;
-            }
-
-            // Calculate for both colors
-            hasJumpsForRed = CheckForJumps(PieceColor.Red);
-            hasJumpsForBlack = CheckForJumps(PieceColor.Black);
-            jumpsCacheValid = true;
-
-            return color == PieceColor.Red ? hasJumpsForRed : hasJumpsForBlack;
-        }
-
-        private bool CheckForJumps(PieceColor color)
         {
             var pieces = board.GetAllPieces(color);
             foreach (var piece in pieces)
