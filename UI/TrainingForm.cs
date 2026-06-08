@@ -126,7 +126,7 @@ namespace checkers_neural_network
 
             btnStart = CreateControlButton("Start Training", 20, 30, 160, 40, Color.FromArgb(0, 150, 0), BtnStart_Click);
             btnPause = CreateControlButton("Pause", 200, 30, 160, 40, Color.FromArgb(255, 165, 0), BtnPause_Click, false);
-            btnStop = CreateControlButton("Stop & Save", 20, 80, 160, 40, Color.FromArgb(220, 53, 69), BtnStop_Click, false);
+            btnStop = CreateControlButton("Stop", 20, 80, 160, 40, Color.FromArgb(220, 53, 69), BtnStop_Click, false);
             btnBack = CreateControlButton("Back to Menu", 200, 80, 160, 40, Color.Gray, (s, e) => Close());
 
             controlGroup.Controls.AddRange(new Control[] { btnStart, btnPause, btnStop, btnBack });
@@ -293,7 +293,29 @@ namespace checkers_neural_network
             AppendLog("Training stopped by user");
 
             if (trainingSystem?.BestPlayer != null)
-                SaveBestPlayer();
+            {
+                var result = MessageBox.Show(
+                    $"Training stopped at generation {trainingSystem.Generation}.\n\n" +
+                    $"Best Fitness: {trainingSystem.BestPlayer.Brain.Fitness:F2}\n" +
+                    $"Best Win Rate: {trainingSystem.BestPlayer.Stats.WinRate:P1}\n\n" +
+                    "Do you want to save this bot?",
+                    "Save Bot?",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                if (result == DialogResult.Yes)
+                    SaveBestPlayer();
+                else
+                    AppendLog("Bot was not saved.", Color.Orange);
+            }
+            else
+            {
+                MessageBox.Show(
+                    "No trained bot is available yet to save.",
+                    "Nothing to Save",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
         }
 
         private void RunTraining(TrainingConfig config, int generations)
